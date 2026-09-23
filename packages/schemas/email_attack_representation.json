@@ -1,0 +1,187 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "EmailAttackRepresentation",
+  "type": "object",
+  "required": [
+    "message_id",
+    "timestamp",
+    "sender",
+    "recipients",
+    "authentication",
+    "headers",
+    "mime",
+    "body",
+    "classification",
+    "risk_evidence"
+  ],
+  "properties": {
+    "message_id": { "type": "string" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "sender": {
+      "type": "object",
+      "required": ["address"],
+      "properties": {
+        "address": { "type": "string" },
+        "display_name": { "type": "string" },
+        "domain": { "type": "string" }
+      }
+    },
+    "recipients": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["address", "type"],
+        "properties": {
+          "address": { "type": "string" },
+          "display_name": { "type": "string" },
+          "type": { "type": "string", "enum": ["to", "cc", "bcc"] }
+        }
+      }
+    },
+    "authentication": {
+      "type": "object",
+      "required": ["spf", "dkim", "dmarc"],
+      "properties": {
+        "spf": { "type": "string", "enum": ["pass", "fail", "softfail", "neutral", "none", "temperror", "permerror"] },
+        "dkim": { "type": "string", "enum": ["pass", "fail", "none", "temperror", "permerror"] },
+        "dmarc": { "type": "string", "enum": ["pass", "fail", "none", "temperror", "permerror"] },
+        "auth_results_raw": { "type": "string" }
+      }
+    },
+    "headers": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "mime": {
+      "type": "object",
+      "properties": {
+        "content_type": { "type": "string" },
+        "boundary": { "type": "string" },
+        "structure_depth": { "type": "integer" },
+        "is_multipart": { "type": "boolean" },
+        "parts_summary": { "type": "array", "items": { "type": "string" } },
+        "malformed_indicators": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "body": {
+      "type": "object",
+      "properties": {
+        "text_plain": { "type": "string" },
+        "text_html": { "type": "string" },
+        "html_features": {
+          "type": "object",
+          "properties": {
+            "has_forms": { "type": "boolean" },
+            "has_scripts": { "type": "boolean" },
+            "has_iframes": { "type": "boolean" },
+            "has_svg_xml": { "type": "boolean" },
+            "has_external_css": { "type": "boolean" },
+            "has_remote_images": { "type": "boolean" },
+            "hidden_elements_count": { "type": "integer" },
+            "suspicious_tags": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "urls": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["url", "domain"],
+        "properties": {
+          "url": { "type": "string" },
+          "domain": { "type": "string" },
+          "display_text": { "type": "string" },
+          "is_mismatched": { "type": "boolean" },
+          "is_ip_based": { "type": "boolean" },
+          "is_punycode": { "type": "boolean" },
+          "reputation": { "type": "string" }
+        }
+      }
+    },
+    "attachments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["filename", "content_type", "sha256", "size_bytes"],
+        "properties": {
+          "filename": { "type": "string" },
+          "content_type": { "type": "string" },
+          "sha256": { "type": "string" },
+          "size_bytes": { "type": "integer" },
+          "magic_type": { "type": "string" },
+          "is_executable": { "type": "boolean" },
+          "has_macros": { "type": "boolean" },
+          "archive_contents": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "embedded_content": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": { "type": "string" },
+          "source_url": { "type": "string" },
+          "mime_type": { "type": "string" }
+        }
+      }
+    },
+    "rendering_features": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "parser_features": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "behavioral_features": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "exploit_indicators": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["indicator_type", "evidence", "confidence"],
+        "properties": {
+          "indicator_type": { "type": "string" },
+          "evidence": { "type": "string" },
+          "target_software": { "type": "string" },
+          "target_cve": { "type": "string" },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      }
+    },
+    "identity_targets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["email"],
+        "properties": {
+          "email": { "type": "string" },
+          "user_id": { "type": "string" },
+          "department": { "type": "string" },
+          "is_vip": { "type": "boolean" },
+          "privilege_level": { "type": "string" }
+        }
+      }
+    },
+    "classification": {
+      "type": "string",
+      "enum": ["PUBLIC", "INTERNAL", "CONFIDENTIAL", "RESTRICTED"]
+    },
+    "risk_evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["factor", "score_impact", "reasoning"],
+        "properties": {
+          "factor": { "type": "string" },
+          "score_impact": { "type": "number" },
+          "reasoning": { "type": "string" }
+        }
+      }
+    }
+  }
+}
