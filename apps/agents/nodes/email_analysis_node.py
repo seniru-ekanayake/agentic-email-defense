@@ -8,6 +8,7 @@ from typing import Dict, Any
 
 from packages.schemas.python.models import SecurityState, EmailAttackRepresentation
 from apps.sandbox.src.sandbox_runner import SandboxRunner
+from apps.agents.skills.skill_registry import SkillRegistry
 
 logger = logging.getLogger("EmailAnalysisNode")
 
@@ -15,6 +16,7 @@ logger = logging.getLogger("EmailAnalysisNode")
 class EmailAnalysisNode:
     def __init__(self):
         self.sandbox_runner = SandboxRunner()
+        self.skill_registry = SkillRegistry()
 
     def execute(self, state: SecurityState) -> SecurityState:
         logger.info(f"EmailAnalysisNode executing for message: {state.get('email_representation', {}).get('message_id')}")
@@ -26,11 +28,24 @@ class EmailAnalysisNode:
 
         email_rep = EmailAttackRepresentation(**email_dict)
 
-        # Run Sandbox Behavioral Observation
+        # 1. Dynamic Skill Matching & Activation
+        active_skills = self.skill_registry.match_skills(email_rep)
+        state["activated_skills"] = [s.name for s in active_skills]
+        if active_skills:
+            skill_context = self.skill_registry.build_skill_prompt_context(active_skills)
+            state["skill_context"] = skill_context
+            for skill in active_skills:
+                state["evidence"].append({
+                    "stage": "SKILL_ACTIVATION",
+                    "type": "PLAYBOOK_TRIGGERED",
+                    "detail": f"Activated forensic skill playbook '{skill.name}': {skill.description}"
+                })
+
+        # 2. Run Sandbox Behavioral Observation
         telemetry = self.sandbox_runner.run_safe_observation(email_rep)
         state["sandbox_telemetry"] = telemetry.model_dump()
 
-        # Extract Evidence
+        # 3. Extract Evidence
         if not telemetry.is_benign:
             for anomaly in telemetry.rendering_anomalies:
                 state["evidence"].append({
@@ -59,5 +74,6 @@ class EmailAnalysisNode:
                 "cve": ind.target_cve
             })
 
-        logger.info(f"EmailAnalysisNode completed. Extracted {len(state['evidence'])} evidence items.")
+        logger.info(f"EmailAnalysisNode completed. Extracted {len(state['evidence'])} evidence items. Active skills: {state.get('activated_skills', [])}")
         return state
+

@@ -16,12 +16,15 @@ This skill defines the standardized Git lifecycle, branch architecture, commit g
 ## 1. Pre-Flight Security & Hygiene Rules
 
 Before staging or committing any files:
-1. **Zero Secret Leakage**: Verify that no `.env`, private keys (`*.pem`, `*.key`), API tokens, or internal credentials are being tracked.
-2. **Exclusion Check**: Ensure `.gitignore` is active and ignores:
+1. **Mandatory GitHub Identity**: All commits must be made with:
+   - `user.name`: `seniru-ekanayake`
+   - `user.email`: `ekanayakeseniru0@gmail.com`
+2. **Zero Secret Leakage**: Verify that no `.env`, private keys (`*.pem`, `*.key`), API tokens, or internal credentials are being tracked.
+3. **Exclusion Check**: Ensure `.gitignore` is active and ignores:
    - `node_modules/`, `.next/`, `dist/`, `build/`
    - `__pycache__/`, `.pytest_cache/`, `.coverage`, `.venv/`
    - `apps/sandbox/temp_emails/`, `data/neo4j/`, `scratch/`, `*.log`, `*.db-journal`
-3. **Clean Status Verification**: Always run `git status` before and after staging to verify exactly what changes are included.
+4. **Clean Status Verification**: Always run `git status` before and after staging to verify exactly what changes are included.
 
 ---
 
