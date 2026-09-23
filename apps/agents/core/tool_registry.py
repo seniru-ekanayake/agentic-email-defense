@@ -323,3 +323,51 @@ class ToolRegistry:
             ),
             lambda p: {"ticket_id": f"SOC-{uuid.uuid4().hex[:6].upper()}", "status": "OPEN", "title": p.get("title")}
         )
+
+        # 9. Free Threat Intel Indicator Lookup (LOW risk)
+        from packages.threat_intel.src.free_feeds import FreeThreatIntelEngine
+        _threat_engine = FreeThreatIntelEngine()
+
+        self.register_tool(
+            ToolDefinition(
+                name="threat_intel_lookup",
+                description="Query 100% free threat intel feeds (URLhaus malware URLs, AbuseIPDB reputation, Quad9 DoH) for URLs, IPs, or domains.",
+                risk_level=RiskLevel.LOW,
+                required_permission="threat_intel.query",
+                approval_requirement=ApprovalRequirement.AUTOMATIC,
+                input_schema={"indicator_type": "string", "indicator_value": "string"},
+                output_schema={"is_malicious": "boolean", "details": "object"}
+            ),
+            lambda p: _threat_engine.assess_indicator(p.get("indicator_type", "url"), p.get("indicator_value", ""))
+        )
+
+        # 10. DNS & SPF/DMARC Recon Tool (LOW risk)
+        from apps.agents.core.mcp_servers.dns_server import handle_spf_dmarc_audit, handle_dns_resolve
+        self.register_tool(
+            ToolDefinition(
+                name="dns_spf_dmarc_recon",
+                description="Audit domain SPF and DMARC enforcement records for email spoofing vulnerability.",
+                risk_level=RiskLevel.LOW,
+                required_permission="network.dns_lookup",
+                approval_requirement=ApprovalRequirement.AUTOMATIC,
+                input_schema={"domain": "string"},
+                output_schema={"has_spf": "boolean", "has_dmarc": "boolean", "is_spoofing_vulnerable": "boolean"}
+            ),
+            lambda p: handle_spf_dmarc_audit(p)
+        )
+
+        # 11. Historical Communication Telemetry (LOW risk)
+        from apps.agents.core.mcp_servers.telemetry_server import handle_query_sender_history
+        self.register_tool(
+            ToolDefinition(
+                name="query_sender_history",
+                description="Query historical communication frequency, first-seen timestamp, and baseline anomaly score for a sender/recipient pair.",
+                risk_level=RiskLevel.LOW,
+                required_permission="telemetry.query",
+                approval_requirement=ApprovalRequirement.AUTOMATIC,
+                input_schema={"sender_email": "string", "recipient_email": "string", "sender_domain": "string"},
+                output_schema={"historical_email_count": "integer", "is_first_time_sender": "boolean", "baseline_reputation": "string"}
+            ),
+            lambda p: handle_query_sender_history(p)
+        )
+
