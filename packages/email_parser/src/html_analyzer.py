@@ -112,6 +112,8 @@ class HtmlAnalyzer:
 
         # URL extraction and mismatch analysis
         urls: List[UrlFeature] = []
+        rfc2606_domains = {".invalid", ".example", ".test", ".localhost", "example.com", "example.org", "example.net"}
+
         for href, text in parser.links:
             parsed = urllib.parse.urlparse(href)
             domain = parsed.netloc.lower()
@@ -120,12 +122,16 @@ class HtmlAnalyzer:
             is_ip = bool(re.match(r"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?::[0-9]+)?$", domain))
             # Check punycode
             is_puny = "xn--" in domain
+            # Check RFC 2606 / RFC 6761 test domain
+            is_test_domain = any(domain.endswith(td) for td in rfc2606_domains)
             # Check mismatch (e.g. text says paypal.com, href is evil.com)
             is_mismatched = False
             if text and ("http://" in text or "https://" in text or ".com" in text or ".org" in text):
                 text_clean = text.replace("http://", "").replace("https://", "").split("/")[0].lower()
                 if domain and text_clean and domain != text_clean and not domain.endswith("." + text_clean):
                     is_mismatched = True
+
+            reputation = "inert_test_domain" if is_test_domain else ("suspicious" if (is_mismatched or is_ip or is_puny) else "unknown")
 
             urls.append(
                 UrlFeature(
@@ -135,13 +141,54 @@ class HtmlAnalyzer:
                     is_mismatched=is_mismatched,
                     is_ip_based=is_ip,
                     is_punycode=is_puny,
-                    reputation="suspicious" if (is_mismatched or is_ip or is_puny) else "unknown"
+                    reputation=reputation
                 )
             )
 
         # Exploit indicators and rendering anomalies
         exploit_indicators: List[ExploitIndicator] = []
         rendering_features: List[str] = []
+
+        # Scan for Unicode Obfuscation, RTLO, Zero-Width Characters, and Homoglyphs
+        rtlo_chars = re.findall(r"[\u202E\u202D\u2066\u2067\u2068\u2069]", html_content)
+        if rtlo_chars:
+            exploit_indicators.append(
+                ExploitIndicator(
+                    indicator_type="UNICODE_RTLO_OBFUSCATION",
+                    evidence=f"Detected Right-to-Left Override (RTLO) Unicode control character(s): {[hex(ord(c)) for c in set(rtlo_chars)]}",
+                    target_software="Email Client / Visual Parser",
+                    target_cve=None,
+                    confidence=0.98
+                )
+            )
+            rendering_features.append("Unicode RTLO character detected (visual spoofing attempt).")
+
+        zero_width = re.findall(r"[\u200B\u200C\u200D\uFEFF\u2060\u00AD]", html_content)
+        if zero_width:
+            exploit_indicators.append(
+                ExploitIndicator(
+                    indicator_type="UNICODE_ZERO_WIDTH_OBFUSCATION",
+                    evidence=f"Detected {len(zero_width)} hidden zero-width / soft-hyphen character(s) used for NLP/filter evasion.",
+                    target_software="NLP / Signature Gateway",
+                    target_cve=None,
+                    confidence=0.95
+                )
+            )
+            rendering_features.append(f"Contains {len(zero_width)} zero-width/soft-hyphen characters for signature evasion.")
+
+        # Cyrillic / Greek homoglyphs mixed into ASCII text
+        mixed_homoglyphs = re.findall(r"[a-zA-Z0-9]+[\u0400-\u04FF\u0370-\u03FF]+[a-zA-Z0-9]*|[\u0400-\u04FF\u0370-\u03FF]+[a-zA-Z0-9]+", html_content)
+        if mixed_homoglyphs:
+            exploit_indicators.append(
+                ExploitIndicator(
+                    indicator_type="HOMOGLYPH_DECEPTIVE_TYPOGRAPHY",
+                    evidence=f"Detected mixed-script Cyrillic/Greek homoglyph spoofing tokens: {mixed_homoglyphs[:5]}",
+                    target_software="Visual Display / User Trust",
+                    target_cve=None,
+                    confidence=0.92
+                )
+            )
+            rendering_features.append(f"Detected {len(mixed_homoglyphs)} mixed-script homoglyph tokens.")
 
         # Scan for Monikers / UNC / Rendering exploits in raw HTML
         for pattern, desc in self.MONIKER_PATTERNS:
@@ -174,3 +221,4 @@ class HtmlAnalyzer:
             rendering_features.append("HTML contains interactive credential harvesting form.")
 
         return html_features, urls, exploit_indicators, rendering_features
+
