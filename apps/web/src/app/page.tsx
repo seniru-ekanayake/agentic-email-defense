@@ -162,11 +162,11 @@ export default function DashboardPage() {
           {/* Brand Logo & Identifier */}
           <div className="flex items-center space-x-3 px-1 py-1">
             <div className="w-10 h-10 rounded-xl bg-white/5 border border-border/80 flex items-center justify-center p-1 shrink-0 overflow-hidden shadow-glow-cyan">
-              <img src="/logo.png" alt="FisherMail" className="w-full h-full object-contain" />
+              <img src="/logo.png" alt="FishingMails" className="w-full h-full object-contain" />
             </div>
             <div>
               <div className="text-sm font-black tracking-wider text-foreground font-poppins flex items-center gap-1.5">
-                FISHERMAIL
+                FISHINGMAILS
                 <span className="w-1.5 h-1.5 rounded-full bg-neon-cyan animate-ping inline-block" />
               </div>
               <div className="text-[10px] text-muted font-mono uppercase tracking-widest font-semibold">

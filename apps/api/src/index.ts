@@ -19,7 +19,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(swagger, {
     openapi: {
       info: {
-        title: 'FisherMail • Autonomous Email Exploitation Detection & Response API',
+        title: 'FishingMails • Autonomous Email Exploitation Detection & Response API',
         description: 'Enterprise API for detecting, correlating, and mitigating email rendering & zero-click exploits.',
         version: '1.0.0',
       },

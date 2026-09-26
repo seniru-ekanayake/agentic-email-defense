@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="assets/logo.png" width="280" alt="FisherMail Logo">
+  <img src="assets/logo.png" width="280" alt="FishingMails Logo">
 </p>
 
-<h1 align="center">FisherMail</h1>
+<h1 align="center">FishingMails</h1>
 
 <p align="center">
   <em>He sits by the mailstream. He sees the hook. He cuts the line.</em>
