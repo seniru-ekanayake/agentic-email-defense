@@ -37,31 +37,31 @@ export function ExposureView() {
   ];
 
   return (
-    <div className="bg-card border border-border rounded-2xl p-6 shadow-sm space-y-5">
+    <div className="bg-card border border-border rounded-2xl p-6 shadow-tactical-card space-y-5 font-poppins">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-accent-blue" />
-            <h3 className="text-sm font-semibold tracking-tight text-foreground font-mono">
+            <span className="w-2 h-2 rounded-full bg-neon-cyan shadow-[0_0_8px_#00e5ff] animate-pulse" />
+            <h3 className="text-sm font-bold tracking-wider text-foreground font-mono uppercase">
               INTERNET-FACING EMAIL ATTACK SURFACE
             </h3>
           </div>
-          <p className="text-xs text-muted mt-0.5">
-            Continuous external surface discovery, mail server fingerprinting, and live CVE correlation
+          <p className="text-xs text-muted mt-0.5 font-light">
+            Continuous perimeter asset discovery, software version fingerprinting & live CVE correlation
           </p>
         </div>
-        <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-slate-50 dark:bg-slate-950/50 text-foreground border border-border rounded-full text-xs font-mono font-medium self-start">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-          3 Discovered Hosts
+        <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-card-secondary text-foreground border border-border rounded-xl text-xs font-mono font-semibold self-start">
+          <span className="w-1.5 h-1.5 rounded-full bg-neon-emerald animate-pulse" />
+          3 DISCOVERED HOSTS
         </span>
       </div>
 
       <div className="overflow-x-auto">
         <table className="w-full text-left text-xs text-foreground">
-          <thead className="bg-slate-50/50 dark:bg-slate-950/40 text-muted uppercase font-mono text-[10px] border-b border-border">
+          <thead className="bg-card-secondary text-muted uppercase font-mono text-[10px] border-b border-border">
             <tr>
               <th className="p-3.5">Host / FQDN</th>
-              <th className="p-3.5">Identified Product</th>
+              <th className="p-3.5">Identified Software</th>
               <th className="p-3.5">Version</th>
               <th className="p-3.5">Correlated CVEs</th>
               <th className="p-3.5">Asset State</th>
@@ -80,7 +80,7 @@ export function ExposureView() {
                   </div>
                   <span className="text-[10px] text-muted font-mono block pl-5">{asset.ip}</span>
                 </td>
-                <td className="p-3.5 text-foreground font-medium">{asset.product}</td>
+                <td className="p-3.5 text-foreground font-semibold">{asset.product}</td>
                 <td className="p-3.5 font-mono text-muted text-[11px]">{asset.version}</td>
                 <td className="p-3.5">
                   {asset.cves.length > 0 ? (
@@ -88,7 +88,7 @@ export function ExposureView() {
                       {asset.cves.map((c, i) => (
                         <span
                           key={i}
-                          className="px-2 py-0.5 bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-800/60 rounded text-[10px] font-mono font-semibold"
+                          className="px-2 py-0.5 bg-rose-500/10 text-rose-400 border border-rose-500/30 rounded text-[10px] font-mono font-bold"
                         >
                           {c}
                         </span>
@@ -100,27 +100,27 @@ export function ExposureView() {
                 </td>
                 <td className="p-3.5">
                   <span
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-semibold ${
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-[10px] font-mono font-bold ${
                       asset.state === 'ACTIVE_EXPLOITATION'
-                        ? 'bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-800'
+                        ? 'bg-rose-500/10 text-rose-400 border border-rose-500/30 shadow-[0_0_8px_rgba(255,0,85,0.2)]'
                         : asset.state === 'VULNERABLE'
-                        ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800'
-                        : 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800'
+                        ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30'
+                        : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
                     }`}
                   >
                     <span
                       className={`w-1.5 h-1.5 rounded-full ${
                         asset.state === 'ACTIVE_EXPLOITATION'
-                          ? 'bg-rose-500 animate-ping'
+                          ? 'bg-neon-rose animate-ping'
                           : asset.state === 'VULNERABLE'
-                          ? 'bg-amber-500'
-                          : 'bg-emerald-500'
+                          ? 'bg-neon-amber'
+                          : 'bg-neon-emerald'
                       }`}
                     />
                     {asset.state}
                   </span>
                 </td>
-                <td className="p-3.5 font-mono font-bold text-right text-foreground">
+                <td className="p-3.5 font-mono font-black text-right text-foreground">
                   {asset.exposure_score.toFixed(1)} / 100
                 </td>
               </tr>
