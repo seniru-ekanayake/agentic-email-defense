@@ -268,14 +268,16 @@ class MimeParser:
                 )
             elif part_type == "text/plain" and not text_plain:
                 try:
-                    text_plain = part.get_payload(decode=True).decode(part.get_content_charset() or "utf-8", errors="replace")
+                    payload = part.get_payload(decode=True)
+                    text_plain = payload.decode(part.get_content_charset() or "utf-8", errors="replace") if payload is not None else ""
                 except Exception:
-                    text_plain = str(part.get_payload())
+                    text_plain = str(part.get_payload()) if part.get_payload() is not None else ""
             elif part_type == "text/html" and not text_html:
                 try:
-                    text_html = part.get_payload(decode=True).decode(part.get_content_charset() or "utf-8", errors="replace")
+                    payload = part.get_payload(decode=True)
+                    text_html = payload.decode(part.get_content_charset() or "utf-8", errors="replace") if payload is not None else ""
                 except Exception:
-                    text_html = str(part.get_payload())
+                    text_html = str(part.get_payload()) if part.get_payload() is not None else ""
 
         mime_structure = MimeStructure(
             content_type=content_type,

@@ -62,7 +62,7 @@ class SecurityGraphStreamer:
             data={"tenant_id": tenant_id}
         )
         await asyncio.sleep(0.01)  # Yield to event loop
-        state = self.ingestion_node.execute(state)
+        state = await asyncio.to_thread(self.ingestion_node.execute, state)
         
         yield AgentEvent(
             event_type="thought",
@@ -79,7 +79,7 @@ class SecurityGraphStreamer:
             data={"message_id": state.get("email_representation", {}).get("message_id")}
         )
         await asyncio.sleep(0.01)
-        state = self.email_analysis_node.execute(state)
+        state = await asyncio.to_thread(self.email_analysis_node.execute, state)
 
         active_skills = state.get("activated_skills", [])
         if active_skills:
@@ -99,7 +99,7 @@ class SecurityGraphStreamer:
             data={}
         )
         await asyncio.sleep(0.01)
-        state = self.vuln_research_node.execute(state)
+        state = await asyncio.to_thread(self.vuln_research_node.execute, state)
 
         vuln_ctx = state.get("vulnerability_context", [])
         if vuln_ctx:
@@ -119,7 +119,7 @@ class SecurityGraphStreamer:
             data={}
         )
         await asyncio.sleep(0.01)
-        state = self.exposure_node.execute(state)
+        state = await asyncio.to_thread(self.exposure_node.execute, state)
 
         # --- Stage 5: Investigation & Campaign Deduplication ---
         yield AgentEvent(
@@ -129,7 +129,7 @@ class SecurityGraphStreamer:
             data={}
         )
         await asyncio.sleep(0.01)
-        state = self.investigation_node.execute(state)
+        state = await asyncio.to_thread(self.investigation_node.execute, state)
 
         camp_ctx = state.get("campaign_context", {})
         if camp_ctx:
@@ -148,7 +148,7 @@ class SecurityGraphStreamer:
             data={"autonomy_level": state.get("autonomy_level", 1)}
         )
         await asyncio.sleep(0.01)
-        state = self.response_node.execute(state)
+        state = await asyncio.to_thread(self.response_node.execute, state)
 
         proposed_tools = state.get("proposed_tools", [])
         for prop in proposed_tools:

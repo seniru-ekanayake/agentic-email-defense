@@ -106,6 +106,21 @@ class TestUrlSandbox(unittest.TestCase):
         self.assertFalse(report.page_features.has_login_form)
         self.assertIsNone(report.threat_category)
 
+    def test_redirect_hop_ssrf_blocking(self):
+        """Test that redirect hops targeting internal cloud metadata or localhost are blocked."""
+        entry_url = "https://legit-shortener.com/link123"
+        redirects = [
+            "https://legit-shortener.com/link123",
+            "http://169.254.169.254/latest/meta-data/"
+        ]
+
+        report = self.url_sandbox.analyze_url(entry_url, simulated_redirects=redirects)
+
+        self.assertTrue(report.network_guard_blocked)
+        self.assertEqual(report.verdict, "BLOCKED_SSRF")
+        self.assertEqual(report.threat_category, "SSRF_PROBE")
+        self.assertEqual(report.final_destination_url, "http://169.254.169.254/latest/meta-data/")
+
 
 if __name__ == "__main__":
     unittest.main()

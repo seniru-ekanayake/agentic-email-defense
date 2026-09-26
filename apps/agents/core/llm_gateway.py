@@ -179,7 +179,16 @@ class OpenRouterProvider(LLMProvider):
                     try:
                         structured_json = json.loads(content)
                     except json.JSONDecodeError:
-                        logger.error("Failed to parse expected JSON output from LLM.")
+                        logger.warning("Strict json.loads failed on LLM output. Attempting regex markdown extraction fallback...")
+                        import re
+                        match = re.search(r"(\{.*\}|\[.*\])", content, re.DOTALL)
+                        if match:
+                            try:
+                                structured_json = json.loads(match.group(0))
+                            except Exception:
+                                logger.error("Regex extraction also failed to parse JSON from LLM content.")
+                        else:
+                            logger.error("Failed to parse expected JSON output from LLM.")
                 
                 return LLMResponse(
                     content=content,

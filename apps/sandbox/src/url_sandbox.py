@@ -95,6 +95,22 @@ class UrlSandboxRunner:
 
         # 3. Trace Redirects
         redirect_chain = simulated_redirects or [url]
+        for hop in redirect_chain:
+            hop_allowed, hop_reason, hop_ssrf = self.network_guard.evaluate_destination(hop)
+            if not hop_allowed:
+                evidence.append(f"NetworkGuard blocked redirect hop '{hop}': {hop_reason}")
+                return UrlSandboxReport(
+                    scan_id=scan_id,
+                    submitted_url=url,
+                    final_destination_url=hop,
+                    network_guard_blocked=True,
+                    blocked_reason=hop_reason,
+                    verdict="BLOCKED_SSRF" if hop_ssrf else "MALICIOUS",
+                    threat_category="SSRF_PROBE" if hop_ssrf else "NETWORK_VIOLATION",
+                    risk_score=95.0 if hop_ssrf else 80.0,
+                    evidence=evidence
+                )
+
         final_destination = redirect_chain[-1]
         if len(redirect_chain) > 1:
             evidence.append(f"Multi-hop redirect chain detected ({len(redirect_chain)} hops) ending at {final_destination}")
