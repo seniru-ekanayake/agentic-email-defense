@@ -4,129 +4,68 @@
 
 @layer base {
   :root {
-    --background: #f5f7fb;
-    --foreground: #080d1a;
-    --sidebar: #ffffff;
-    --card: #ffffff;
-    --card-secondary: #f8fafc;
-    --border: #e2e8f0;
-    --border-subtle: #edf2f7;
-    --muted: #64748b;
-    --hover-bg: #edf2f7;
-    --accent-cyan: #0284c7;
-    --accent-rose: #e11d48;
-    --accent-amber: #d97706;
-    --accent-emerald: #059669;
+    --bg: #f7f8fa;
+    --surface: #ffffff;
+    --surface2: #f2f4f7;
+    --border: #e7e9ee;
+    --text: #111318;
+    --muted: #737986;
+    --blue: #2563eb;
+    --blue-soft: #eef4ff;
+    --green: #16945b;
+    --green-soft: #eaf8f1;
+    --amber: #b7791f;
+    --amber-soft: #fff7e7;
+    --red: #d04444;
+    --red-soft: #fff0f0;
+    --shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 8px 24px rgba(16, 24, 40, 0.035);
   }
+}
 
-  .dark {
-    --background: #04070f;
-    --foreground: #f8fafc;
-    --sidebar: #070b16;
-    --card: #0a0f1d;
-    --card-secondary: #060913;
-    --border: #162035;
-    --border-subtle: #0f172a;
-    --muted: #8493ad;
-    --hover-bg: #111a2e;
-    --accent-cyan: #00e5ff;
-    --accent-rose: #ff0055;
-    --accent-amber: #ffaa00;
-    --accent-emerald: #00ff88;
-  }
+* {
+  box-sizing: border-box;
 }
 
 body {
-  font-family: 'Poppins', sans-serif;
-  color: var(--foreground);
-  background: var(--background);
-  transition: background-color 0.2s ease, color 0.2s ease;
-  position: relative;
+  margin: 0;
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  letter-spacing: -0.01em;
 }
 
-/* Cinematic Subtle CRT Grain Texture */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 999;
-  pointer-events: none;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.03'/%3E%3C/svg%3E");
-  opacity: 0.7;
+/* Custom Clean Utility Styles */
+.card-shadow {
+  box-shadow: var(--shadow);
 }
 
-/* Ambient Tactical Mesh */
-.tactical-mesh {
-  background-image: 
-    radial-gradient(at 0% 0%, rgba(0, 229, 255, 0.05) 0px, transparent 50%),
-    radial-gradient(at 100% 0%, rgba(255, 0, 85, 0.04) 0px, transparent 50%),
-    radial-gradient(at 50% 100%, rgba(0, 255, 136, 0.03) 0px, transparent 50%);
+.pill-critical {
+  background: var(--red-soft);
+  color: var(--red);
 }
 
-/* Conic Gradient Radar Glow for Critical Threat Tiles */
-@property --angle {
-  syntax: "<angle>";
-  initial-value: 0deg;
-  inherits: false;
+.pill-review {
+  background: var(--amber-soft);
+  color: var(--amber);
 }
 
-.radar-border-glow {
-  position: relative;
-  border-radius: 1rem;
-}
-.radar-border-glow::before {
-  content: "";
-  position: absolute;
-  inset: -1px;
-  border-radius: inherit;
-  padding: 1px;
-  background: conic-gradient(from var(--angle), transparent 75%, #ff0055 100%);
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  animation: radarRotate 4s linear infinite;
-  pointer-events: none;
+.pill-clean {
+  background: var(--green-soft);
+  color: var(--green);
 }
 
-@keyframes radarRotate {
-  to { --angle: 360deg; }
-}
-
-/* Animated SVG Packet Flow */
-@keyframes packetFlow {
-  to { stroke-dashoffset: -20; }
-}
-.packet-stream {
-  stroke-dasharray: 4 6;
-  animation: packetFlow 1s linear infinite;
-}
-
-/* Typewriter Cursor */
-@keyframes blinkCursor {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
-}
-.cursor-block {
-  display: inline-block;
-  width: 7px;
-  height: 13px;
-  background-color: var(--accent-cyan);
-  vertical-align: middle;
-  animation: blinkCursor 0.9s infinite;
-}
-
-/* Precision Scrollbars */
+/* Custom Scrollbar */
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(132, 147, 173, 0.3);
-  border-radius: 4px;
+  background: #d8dce3;
+  border-radius: 9999px;
 }
-.dark ::-webkit-scrollbar-thumb {
-  background: rgba(22, 32, 53, 0.8);
+::-webkit-scrollbar-thumb:hover {
+  background: #bcc3cd;
 }

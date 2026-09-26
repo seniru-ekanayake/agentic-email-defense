@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { AgentLiveStreamVisualizer, StreamEvent } from '@/components/AgentLiveStreamVisualizer';
 import { AttackGraphVisualizer } from '@/components/AttackGraphVisualizer';
 import { IncidentDetailModal } from '@/components/IncidentDetailModal';
@@ -8,29 +8,14 @@ import { HumanApprovalModal, PendingActionProposal } from '@/components/HumanApp
 import { ExposureView } from '@/components/ExposureView';
 
 export default function DashboardPage() {
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
-  const [activeNav, setActiveNav] = useState<'overview' | 'stream' | 'incidents' | 'graph' | 'surface'>('overview');
+  const [activeNav, setActiveNav] = useState<'overview' | 'mailbox' | 'investigations' | 'agents' | 'policies' | 'reports' | 'settings'>('overview');
   const [selectedIncident, setSelectedIncident] = useState<any | null>(null);
   const [approvalModalOpen, setApprovalModalOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [investigationDrawerOpen, setInvestigationDrawerOpen] = useState(false);
 
   // SSE Stream Simulation State
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
-
-  // Synchronize theme with html element
-  useEffect(() => {
-    const root = document.documentElement;
-    if (theme === 'dark') {
-      root.classList.add('dark');
-    } else {
-      root.classList.remove('dark');
-    }
-  }, [theme]);
-
-  const toggleTheme = () => {
-    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
-  };
 
   const pendingProposal: PendingActionProposal = {
     token: 'APP-8E2F9A',
@@ -47,97 +32,227 @@ export default function DashboardPage() {
     target_identity: 'cfo@enterprise-corp.internal',
   };
 
-  const incidents = [
+  const investigations = [
     {
       incident_id: 'INC-849201',
-      tenant_id: 'tenant-enterprise-demo',
+      sender: 'accounts@micros0ft-support.com',
+      subject: 'Password reset required — action needed',
+      verdict: 'Malicious',
+      verdict_type: 'critical',
+      confidence: '99.8%',
+      agents_path: '4 agents',
+      time: '2m ago',
       title: 'Outlook Moniker Link Forced NTLM Relay',
       severity: 'CRITICAL',
       overall_risk_score: 96.8,
-      confidence: 0.98,
-      status: 'CONTAINMENT_PROPOSED',
       target_identity: 'cfo@enterprise-corp.internal',
       mail_platform: 'Microsoft Exchange / OWA 15.1',
-      exposure_status: 'Internet-Facing',
-      interaction_required: 'ZERO-CLICK (VIEW)',
+      exposure_status: 'KNOWN_EXPLOITABLE',
+      interaction_required: 'VIEW (Zero-Click Preview)',
       cve: 'CVE-2024-21413',
-      attack_chain: [
-        { stage: 'INITIAL_ACCESS', technique: 'Spearphishing Link (T1566.002)', description: 'Attacker delivers crafted EML from spoofed domain: corporate-updates.net' },
-        { stage: 'MIME_TRANSPORT', technique: 'M365 Webhook Ingest', description: 'Message arrives at perimeter; payload contains search-ms moniker handler.' },
-        { stage: 'RENDERING_PARSER', technique: 'Moniker URI Parsing', description: 'Outlook preview triggers CVE-2024-21413 bypass in rendering pipeline.' },
-        { stage: 'FORCED_AUTH', technique: 'Forced Authentication (T1187)', description: 'Client initiates outbound SMB callout to \\\\198.51.100.42\\share leaking NetNTLMv2.' },
-        { stage: 'IDENTITY_RELAY', technique: 'Credential Relay', description: 'High-privilege executive identity cfo@enterprise-corp.internal targeted for takeover.' },
-        { stage: 'LATERAL_RISK', technique: 'Session Hijacking', description: 'Threat actor attempts domain service authentication via relayed hash.' }
-      ],
       evidence_summary: [
-        'SPF/DMARC alignment failure for corporate-updates.net.',
-        'Extracted URI moniker link: file:///\\\\198.51.100.42\\share\\payroll.docx!zero',
-        'Outbound SMB connection attempt observed to external IP 198.51.100.42.',
-        'Target identity classified as Tier-0 VIP CFO with administrative privileges.',
-        'Internet-facing Exchange OWA 15.1.2507.17 identified on corporate perimeter.'
+        'Detected search-ms moniker link bypass (CVE-2024-21413) forcing NTLM relay over SMB port 445.',
+        'Sender domain micros0ft-support.com failed SPF (-all) and DMARC (p=reject).',
+        'Payload contains deceptive URI schema with Unicode Right-to-Left Override (RTLO).',
+        'Target mailbox belongs to Tier-0 VIP Identity (Chief Financial Officer).',
+      ],
+      mitre_techniques: [
+        { id: 'T1566.002', name: 'Spearphishing Link', tactic: 'Initial Access' },
+        { id: 'T1204.001', name: 'Malicious Link', tactic: 'Execution' },
+        { id: 'T1187', name: 'Forced Authentication', tactic: 'Credential Access' },
+      ],
+      attack_chain: [
+        { step: 1, node: 'ThreatActor (FIN7)', type: 'actor' },
+        { step: 2, node: 'Campaign (Operation Blindside)', type: 'campaign' },
+        { step: 3, node: 'EmailMessage (CVE-2024-21413)', type: 'email' },
+        { step: 4, node: 'Vulnerability (CVE-2024-21413)', type: 'cve' },
+        { step: 5, node: 'Asset (Exchange OWA 15.1)', type: 'asset' },
+        { step: 6, node: 'Identity (cfo@enterprise-corp.internal)', type: 'identity' },
       ],
       recommended_actions: [
-        { action: 'quarantine_email', reasoning: 'Quarantine malicious EML across all recipient mailboxes.', requires_approval: true },
-        { action: 'revoke_session', reasoning: 'Revoke active Entra ID / Exchange sessions to neutralize relayed tokens.', requires_approval: true },
-        { action: 'block_firewall_ip', reasoning: 'Block outbound SMB connections to attacker IP 198.51.100.42.', requires_approval: false }
+        { name: 'Quarantine Email', risk: 'MEDIUM', automated: true },
+        { name: 'Revoke Active Webmail Session', risk: 'HIGH', automated: false, requires_approval: true },
+        { name: 'Block IP on Edge Gateway', risk: 'HIGH', automated: false, requires_approval: true },
       ],
-      pending_approvals: [
-        { tool_name: 'quarantine_email_and_revoke_session', approval_token: 'APP-8E2F9A', risk_level: 'HIGH' }
-      ]
-    }
+    },
+    {
+      incident_id: 'INC-849195',
+      sender: 'david@partner-payments.co',
+      subject: 'Updated invoice #48291',
+      verdict: 'Suspicious',
+      verdict_type: 'review',
+      confidence: '94.1%',
+      agents_path: '3 agents',
+      time: '11m ago',
+      title: 'Polymorphic BEC Wire Fraud Attempt',
+      severity: 'HIGH',
+      overall_risk_score: 74.2,
+      target_identity: 'finance-lead@enterprise-corp.internal',
+      mail_platform: 'Google Workspace',
+      exposure_status: 'ASSET_EXPOSED',
+      interaction_required: 'CLICK',
+      cve: 'N/A (Social Engineering)',
+      evidence_summary: [
+        'Domain partner-payments.co registered 3 days ago via anonymous registrar.',
+        'Banking wire instructions altered compared to historical vendor communications.',
+        'DKIM signature passed but domain alignment failed.',
+      ],
+      mitre_techniques: [
+        { id: 'T1566.001', name: 'Spearphishing Attachment', tactic: 'Initial Access' },
+        { id: 'T1589', name: 'Gather Victim Identity Info', tactic: 'Reconnaissance' },
+      ],
+      attack_chain: [
+        { step: 1, node: 'ThreatActor (Unknown BEC)', type: 'actor' },
+        { step: 2, node: 'EmailMessage (Invoice #48291)', type: 'email' },
+        { step: 3, node: 'Identity (finance-lead@enterprise-corp.internal)', type: 'identity' },
+      ],
+      recommended_actions: [
+        { name: 'Flag External Warning Banner', risk: 'LOW', automated: true },
+        { name: 'Place Message in Hold Queue', risk: 'MEDIUM', automated: true },
+      ],
+    },
+    {
+      incident_id: 'INC-849182',
+      sender: 'hr@acme-corp.com',
+      subject: 'Benefits enrollment window',
+      verdict: 'Benign',
+      verdict_type: 'clean',
+      confidence: '99.9%',
+      agents_path: '2 agents',
+      time: '18m ago',
+      title: 'Internal Corporate Communication',
+      severity: 'LOW',
+      overall_risk_score: 4.1,
+      target_identity: 'all-employees@acme-corp.com',
+      mail_platform: 'Microsoft 365 Exchange Online',
+      exposure_status: 'PROTECTED',
+      interaction_required: 'NONE',
+      cve: 'None',
+      evidence_summary: [
+        'Internal email matching registered corporate SPF, DKIM, and DMARC records.',
+        'Links point exclusively to approved enterprise HR portal (https://hr.acme-corp.com).',
+        'Zero behavioral anomalies or obfuscated scripts observed in DOM analysis.',
+      ],
+      mitre_techniques: [],
+      attack_chain: [],
+      recommended_actions: [
+        { name: 'Allow Delivery to Inbox', risk: 'LOW', automated: true },
+      ],
+    },
+    {
+      incident_id: 'INC-849170',
+      sender: 'ceo-office@securemail.cc',
+      subject: 'Urgent: confidential transfer',
+      verdict: 'Malicious',
+      verdict_type: 'critical',
+      confidence: '98.7%',
+      agents_path: '4 agents',
+      time: '24m ago',
+      title: 'Executive VIP Impersonation & Wire Divert',
+      severity: 'CRITICAL',
+      overall_risk_score: 93.5,
+      target_identity: 'treasury@enterprise-corp.internal',
+      mail_platform: 'Microsoft Exchange On-Prem',
+      exposure_status: 'KNOWN_EXPLOITABLE',
+      interaction_required: 'MULTI_STEP',
+      cve: 'CVE-2023-35636',
+      evidence_summary: [
+        'Display name spoofing CEO Identity with external disposable domain securemail.cc.',
+        'High urgency markers detected in semantic NLP analysis.',
+        'Attempts to bypass dual-authorization financial workflows.',
+      ],
+      mitre_techniques: [
+        { id: 'T1566.002', name: 'Spearphishing Link', tactic: 'Initial Access' },
+        { id: 'T1656', name: 'Impersonation', tactic: 'Defense Evasion' },
+      ],
+      attack_chain: [
+        { step: 1, node: 'ThreatActor (Scattered Spider)', type: 'actor' },
+        { step: 2, node: 'EmailMessage (Confidential Transfer)', type: 'email' },
+        { step: 3, node: 'Identity (treasury@enterprise-corp.internal)', type: 'identity' },
+      ],
+      recommended_actions: [
+        { name: 'Quarantine Email', risk: 'MEDIUM', automated: true },
+        { name: 'Notify Security Operations Desk', risk: 'LOW', automated: true },
+      ],
+    },
   ];
 
-  const handleRunSimulation = () => {
+  const handleStartStream = () => {
     setIsStreaming(true);
     setEvents([]);
+    setInvestigationDrawerOpen(true);
 
     const streamScenario: StreamEvent[] = [
       {
         event_type: 'stage_start',
         stage: 'INGESTION',
-        message: 'M365 Graph Webhook received RFC 2822 raw payload from attacker@corporate-updates.net. Tenant privacy scrubbing active.',
+        message: 'Ingesting suspicious inbound RFC 2822 payload (Message-ID: <20240926.exploit.moniker@corporate-updates.net>)...',
         timestamp: new Date().toISOString(),
-        data: { message_id: '<20240926.exploit.moniker@corporate-updates.net>', recipient: 'cfo@enterprise-corp.internal' },
-      },
-      {
-        event_type: 'evidence',
-        stage: 'ANALYSIS',
-        message: 'MIME Parser detected Moniker exploit link: file:///\\\\198.51.100.42\\share\\payroll.docx!zero. Sandboxed rendering observed forced SMB auth attempt.',
-        timestamp: new Date().toISOString(),
-        data: { handler: 'search-ms', target_smb: '198.51.100.42:445' },
-      },
-      {
-        event_type: 'skill_activated',
-        stage: 'VULN_RESEARCH',
-        message: 'Dynamic Skill "moniker_exploit_triage" matched CVE-2024-21413 (CVSS 9.8 Critical). URLhaus / AbuseIPDB confirmed malicious IP 198.51.100.42 reputation score 100%.',
-        timestamp: new Date().toISOString(),
-        data: { cve: 'CVE-2024-21413', cvss: 9.8, cisa_kev: true },
-      },
-      {
-        event_type: 'evidence',
-        stage: 'EXPOSURE',
-        message: 'Correlated victim identity cfo@enterprise-corp.internal against internet-facing Exchange OWA server 15.1.2507.17. High blast radius confirmed.',
-        timestamp: new Date().toISOString(),
-        data: { exposure_score: 96.8, asset: 'owa.enterprise-corp.internal' },
       },
       {
         event_type: 'thought',
-        stage: 'INVESTIGATION',
-        message: 'Campaign deduplication aggregated 500 identical emails into Campaign Incident CMP-2024-NTLM-01. Attack graph mapped shortest path to domain admin hash relay.',
+        stage: 'INGESTION',
+        message: 'Data privacy evaluation: Payload classified as CONFIDENTIAL. Scrubbing internal credentials and routing to deterministic boundaries.',
         timestamp: new Date().toISOString(),
-        data: { campaign_id: 'CMP-2024-NTLM-01', rollup_count: 500, shortest_path_hops: 5 },
+      },
+      {
+        event_type: 'stage_start',
+        stage: 'ANALYSIS',
+        message: 'MIME Parser & HTML Analyzer inspecting nested attachments and active tags...',
+        timestamp: new Date().toISOString(),
+      },
+      {
+        event_type: 'skill_activated',
+        stage: 'ANALYSIS',
+        message: 'Forensic Skill Activated: "moniker-link-exploit-triage" (Matched file:// search-ms schema pattern).',
+        timestamp: new Date().toISOString(),
+      },
+      {
+        event_type: 'stage_start',
+        stage: 'VULN_RESEARCH',
+        message: 'Querying CISA KEV & NVD for CVE-2024-21413 and correlating with MITRE ATT&CK T1566.002...',
+        timestamp: new Date().toISOString(),
+      },
+      {
+        event_type: 'evidence',
+        stage: 'VULN_RESEARCH',
+        message: 'Confirmed High-Exploitability Zero-Click MonikerLink Vulnerability (CVSS 9.8). Forced NTLM credential theft via SMB callback.',
+        timestamp: new Date().toISOString(),
+      },
+      {
+        event_type: 'stage_start',
+        stage: 'EXPOSURE',
+        message: 'Correlating with on-prem Exchange OWA mail server at owa.enterprise-corp.internal...',
+        timestamp: new Date().toISOString(),
+      },
+      {
+        event_type: 'thought',
+        stage: 'EXPOSURE',
+        message: 'Attack Surface Status: KNOWN_EXPLOITABLE (Unpatched Microsoft Outlook / OWA 15.1 build).',
+        timestamp: new Date().toISOString(),
+      },
+      {
+        event_type: 'stage_start',
+        stage: 'INVESTIGATION',
+        message: 'Reconstructing Neo4j lateral movement attack chain: Threat Actor (FIN7) ➔ Campaign ➔ CFO Mailbox.',
+        timestamp: new Date().toISOString(),
+      },
+      {
+        event_type: 'stage_start',
+        stage: 'RESPONSE',
+        message: 'Evaluating tenant autonomy policy (Level 1: Human Approved). Proposing containment actions...',
+        timestamp: new Date().toISOString(),
       },
       {
         event_type: 'proposal',
         stage: 'RESPONSE',
-        message: 'Response policy gate triggered: Containment proposed (quarantine & session revoke). Generated approval token APP-8E2F9A.',
+        message: 'Gated Action Proposal: quarantine_email_and_revoke_session (Token: APP-8E2F9A). Awaiting human slide authorization.',
         timestamp: new Date().toISOString(),
-        data: { approval_token: 'APP-8E2F9A', autonomy_level: 1, action: 'quarantine_email_and_revoke_session' },
       },
       {
         event_type: 'complete',
-        stage: 'COMPLETE',
-        message: 'LangGraph triage completed in 1.42s. Awaiting SOC Analyst authorization.',
+        stage: 'RESPONSE',
+        message: 'Autonomous triage completed in 1.42s. Awaiting SOC Analyst authorization.',
         timestamp: new Date().toISOString(),
       },
     ];
@@ -149,466 +264,534 @@ export default function DashboardPage() {
           setIsStreaming(false);
           setApprovalModalOpen(true);
         }
-      }, (idx + 1) * 700);
+      }, (idx + 1) * 600);
     });
   };
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex antialiased tactical-mesh font-poppins selection:bg-neon-cyan/20 selection:text-neon-cyan">
+    <div className="flex min-h-screen bg-[#f7f8fa] text-[#111318]">
       
-      {/* 1. Left Minimalist Sidebar */}
-      <aside className="w-64 bg-sidebar border-r border-border flex flex-col justify-between p-5 shrink-0 transition-all shadow-tactical-card z-20">
-        <div className="space-y-6">
-          {/* Brand Logo & Identifier */}
-          <div className="flex items-center space-x-3 px-1 py-1">
-            <div className="w-10 h-10 rounded-xl bg-white/5 border border-border/80 flex items-center justify-center p-1 shrink-0 overflow-hidden shadow-glow-cyan">
-              <img src="/logo.png" alt="FishingMails" className="w-full h-full object-contain" />
+      {/* 1. Left Fixed Sidebar */}
+      <aside className="w-[236px] bg-white border-r border-[#e7e9ee] p-[22px_14px] fixed inset-y-0 left-0 z-30 flex flex-col justify-between">
+        <div>
+          {/* Brand */}
+          <div className="flex items-center gap-2.5 px-2.5 pb-6">
+            <div className="w-[30px] h-[30px] rounded-[9px] bg-[#111318] grid place-items-center text-white text-sm font-extrabold overflow-hidden">
+              <img src="/logo.png" alt="F" className="w-full h-full object-contain p-0.5" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
             </div>
-            <div>
-              <div className="text-sm font-black tracking-wider text-foreground font-poppins flex items-center gap-1.5">
-                FISHINGMAILS
-                <span className="w-1.5 h-1.5 rounded-full bg-neon-cyan animate-ping inline-block" />
-              </div>
-              <div className="text-[10px] text-muted font-mono uppercase tracking-widest font-semibold">
-                SOC AGENT v0.7.0
-              </div>
-            </div>
+            <strong className="text-[16px] tracking-[-0.04em] font-bold">
+              Fishing<span className="text-[#9aa0aa] font-normal">Mails</span>
+            </strong>
           </div>
 
-          {/* Navigation Links */}
-          <nav className="space-y-1">
+          {/* Workspace Nav Section */}
+          <div className="text-[10px] uppercase text-[#a0a5af] font-bold px-[11px] pt-[13px] pb-[7px] tracking-[0.1em]">
+            Workspace
+          </div>
+          <nav className="space-y-0.5">
             <button
               onClick={() => setActiveNav('overview')}
-              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer font-mono ${
+              className={`w-full flex items-center gap-[11px] px-[11px] py-2.5 rounded-lg text-[13px] transition-colors ${
                 activeNav === 'overview'
-                  ? 'bg-neon-cyan/10 text-neon-cyan border border-neon-cyan/40 font-bold shadow-[0_0_12px_rgba(0,229,255,0.2)]'
-                  : 'text-muted hover:text-foreground hover:bg-hover-bg font-normal'
+                  ? 'bg-[#f0f4ff] text-[#1d5eea] font-[650]'
+                  : 'text-[#737986] hover:bg-[#f5f6f8] hover:text-[#111318]'
               }`}
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-              </svg>
-              <span>01_MISSION_CONTROL</span>
+              <span className="w-[17px] text-center text-sm">⌂</span>
+              <span>Overview</span>
             </button>
 
             <button
-              onClick={() => setActiveNav('stream')}
-              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer font-mono ${
-                activeNav === 'stream'
-                  ? 'bg-neon-cyan/10 text-neon-cyan border border-neon-cyan/40 font-bold shadow-[0_0_12px_rgba(0,229,255,0.2)]'
-                  : 'text-muted hover:text-foreground hover:bg-hover-bg font-normal'
+              onClick={() => setActiveNav('mailbox')}
+              className={`w-full flex items-center gap-[11px] px-[11px] py-2.5 rounded-lg text-[13px] transition-colors ${
+                activeNav === 'mailbox'
+                  ? 'bg-[#f0f4ff] text-[#1d5eea] font-[650]'
+                  : 'text-[#737986] hover:bg-[#f5f6f8] hover:text-[#111318]'
               }`}
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-              </svg>
-              <span>02_LIVE_TELEMETRY</span>
+              <span className="w-[17px] text-center text-sm">✉</span>
+              <span>Mailbox</span>
             </button>
 
             <button
-              onClick={() => setActiveNav('incidents')}
-              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer font-mono ${
-                activeNav === 'incidents'
-                  ? 'bg-neon-cyan/10 text-neon-cyan border border-neon-cyan/40 font-bold shadow-[0_0_12px_rgba(0,229,255,0.2)]'
-                  : 'text-muted hover:text-foreground hover:bg-hover-bg font-normal'
+              onClick={() => setActiveNav('investigations')}
+              className={`w-full flex items-center gap-[11px] px-[11px] py-2.5 rounded-lg text-[13px] transition-colors ${
+                activeNav === 'investigations'
+                  ? 'bg-[#f0f4ff] text-[#1d5eea] font-[650]'
+                  : 'text-[#737986] hover:bg-[#f5f6f8] hover:text-[#111318]'
               }`}
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-              <span>03_TRIAGE_MATRIX</span>
+              <span className="w-[17px] text-center text-sm">◉</span>
+              <span>Investigations</span>
             </button>
 
             <button
-              onClick={() => setActiveNav('graph')}
-              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer font-mono ${
-                activeNav === 'graph'
-                  ? 'bg-neon-cyan/10 text-neon-cyan border border-neon-cyan/40 font-bold shadow-[0_0_12px_rgba(0,229,255,0.2)]'
-                  : 'text-muted hover:text-foreground hover:bg-hover-bg font-normal'
+              onClick={() => setActiveNav('agents')}
+              className={`w-full flex items-center gap-[11px] px-[11px] py-2.5 rounded-lg text-[13px] transition-colors ${
+                activeNav === 'agents'
+                  ? 'bg-[#f0f4ff] text-[#1d5eea] font-[650]'
+                  : 'text-[#737986] hover:bg-[#f5f6f8] hover:text-[#111318]'
               }`}
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
-              </svg>
-              <span>04_ATTACK_GRAPH</span>
+              <span className="w-[17px] text-center text-sm">✦</span>
+              <span>Agents</span>
             </button>
 
             <button
-              onClick={() => setActiveNav('surface')}
-              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer font-mono ${
-                activeNav === 'surface'
-                  ? 'bg-neon-cyan/10 text-neon-cyan border border-neon-cyan/40 font-bold shadow-[0_0_12px_rgba(0,229,255,0.2)]'
-                  : 'text-muted hover:text-foreground hover:bg-hover-bg font-normal'
+              onClick={() => setActiveNav('policies')}
+              className={`w-full flex items-center gap-[11px] px-[11px] py-2.5 rounded-lg text-[13px] transition-colors ${
+                activeNav === 'policies'
+                  ? 'bg-[#f0f4ff] text-[#1d5eea] font-[650]'
+                  : 'text-[#737986] hover:bg-[#f5f6f8] hover:text-[#111318]'
               }`}
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
-              </svg>
-              <span>05_EXPOSURE_RADAR</span>
+              <span className="w-[17px] text-center text-sm">⊞</span>
+              <span>Policies</span>
+            </button>
+
+            <button
+              onClick={() => setActiveNav('reports')}
+              className={`w-full flex items-center gap-[11px] px-[11px] py-2.5 rounded-lg text-[13px] transition-colors ${
+                activeNav === 'reports'
+                  ? 'bg-[#f0f4ff] text-[#1d5eea] font-[650]'
+                  : 'text-[#737986] hover:bg-[#f5f6f8] hover:text-[#111318]'
+              }`}
+            >
+              <span className="w-[17px] text-center text-sm">▤</span>
+              <span>Reports</span>
+            </button>
+          </nav>
+
+          {/* System Nav Section */}
+          <div className="text-[10px] uppercase text-[#a0a5af] font-bold px-[11px] pt-[13px] pb-[7px] tracking-[0.1em]">
+            System
+          </div>
+          <nav className="space-y-0.5">
+            <button
+              onClick={() => setActiveNav('settings')}
+              className={`w-full flex items-center gap-[11px] px-[11px] py-2.5 rounded-lg text-[13px] transition-colors ${
+                activeNav === 'settings'
+                  ? 'bg-[#f0f4ff] text-[#1d5eea] font-[650]'
+                  : 'text-[#737986] hover:bg-[#f5f6f8] hover:text-[#111318]'
+              }`}
+            >
+              <span className="w-[17px] text-center text-sm">⚙</span>
+              <span>Settings</span>
             </button>
           </nav>
         </div>
 
-        {/* Sidebar Footer */}
-        <div className="space-y-4 pt-4 border-t border-border">
-          {/* Theme Toggle */}
-          <button
-            onClick={toggleTheme}
-            className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-medium bg-card border border-border text-muted hover:text-foreground transition shadow-sm cursor-pointer"
-          >
-            <div className="flex items-center gap-2.5">
-              {theme === 'dark' ? (
-                <svg className="w-4 h-4 text-neon-amber" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-                </svg>
-              ) : (
-                <svg className="w-4 h-4 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-                </svg>
-              )}
-              <span className="font-semibold text-foreground font-poppins">{theme === 'dark' ? 'Tactical Dark' : 'Swiss Light'}</span>
-            </div>
-            <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-background border border-border font-bold">
-              {theme}
-            </span>
-          </button>
-
-          {/* Analyst Badge */}
-          <div className="flex items-center space-x-3 px-1 py-1">
-            <div className="w-8 h-8 rounded-xl bg-card border border-border flex items-center justify-center text-xs font-mono font-bold text-foreground">
-              SE
+        {/* Bottom Workspace Badge */}
+        <div className="border-t border-[#e7e9ee] pt-3.5">
+          <div className="flex items-center gap-2.5 px-2.5 py-2">
+            <div className="w-7 h-7 rounded-full bg-[#e9edf3] grid place-items-center text-[10px] font-bold text-[#111318]">
+              AC
             </div>
             <div className="flex-1 truncate text-left">
-              <div className="text-xs font-bold text-foreground font-poppins truncate">Seniru Ekanayake</div>
-              <div className="text-[10px] text-muted font-mono truncate">Lead SOC Engineer</div>
+              <b className="text-xs text-[#111318] block leading-tight">Acme Corp</b>
+              <small className="text-[10px] text-[#737986] block leading-tight">Enterprise workspace</small>
             </div>
-            <span className="w-2 h-2 rounded-full bg-neon-emerald shadow-[0_0_8px_#00ff88]" />
+            <span className="text-[#aaa] text-xs cursor-pointer">⋯</span>
           </div>
         </div>
       </aside>
 
-      {/* 2. Main Work Area */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+      {/* 2. Main Content Area */}
+      <main className="ml-[236px] w-[calc(100%-236px)] p-[30px_36px_44px] max-w-[1600px]">
         
-        {/* Top Header */}
-        <header className="h-16 px-8 border-b border-border bg-sidebar/90 backdrop-blur-xl flex items-center justify-between sticky top-0 z-30 shrink-0">
-          <div className="flex items-center gap-3 w-96">
-            <div className="relative w-full">
-              <svg className="w-4 h-4 text-muted absolute left-3.5 top-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search incidents, CVEs, identities..."
-                className="w-full bg-background border border-border rounded-xl pl-10 pr-12 py-1.5 text-xs text-foreground placeholder:text-muted focus:outline-none focus:border-neon-cyan transition font-mono"
-              />
-              <span className="absolute right-3 top-2 text-[10px] font-mono text-muted bg-card px-1.5 py-0.5 rounded border border-border">
-                ⌘K
-              </span>
-            </div>
+        {/* Header */}
+        <header className="flex items-start justify-between mb-7">
+          <div>
+            <div className="text-xs text-[#737986] mb-1.5 font-medium">Saturday, September 26, 2026</div>
+            <h1 className="text-[27px] font-bold tracking-[-0.04em] m-0 text-[#111318]">Threat Operations</h1>
+            <div className="text-[13px] text-[#737986] mt-1.5 font-normal">Autonomous protection across your organization's email surface.</div>
           </div>
-
-          <div className="flex items-center space-x-3">
+          <div className="flex gap-2">
             <button
-              onClick={handleRunSimulation}
-              disabled={isStreaming}
-              className="px-4 py-2 bg-gradient-to-r from-blue-600 to-neon-cyan hover:from-blue-500 hover:to-cyan-300 text-black rounded-xl text-xs font-extrabold shadow-glow-cyan transition-all active:scale-95 flex items-center gap-2 font-mono disabled:opacity-50 cursor-pointer uppercase"
+              onClick={() => setActiveNav('reports')}
+              className="border border-[#e7e9ee] bg-white px-3 py-2.5 rounded-lg text-xs font-medium text-[#535963] shadow-[0_1px_1px_rgba(0,0,0,0.02)] hover:bg-[#f7f8fa] transition cursor-pointer"
             >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" />
-              </svg>
-              <span>{isStreaming ? 'STREAMING LANGGRAPH...' : 'EXECUTE MASTER TRIAGE'}</span>
+              Export report
             </button>
-
             <button
-              onClick={() => setApprovalModalOpen(true)}
-              className="px-4 py-2 bg-amber-500/10 text-neon-amber border border-amber-500/40 rounded-xl text-xs font-bold transition flex items-center gap-2 font-mono cursor-pointer uppercase"
+              onClick={handleStartStream}
+              className="bg-[#111318] text-white border border-[#111318] px-3 py-2.5 rounded-lg text-xs font-semibold shadow-sm hover:bg-[#252830] transition cursor-pointer flex items-center gap-1.5"
             >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-              </svg>
-              <span>PENDING AUTHORIZATION (1)</span>
+              <span>+ Investigate email</span>
             </button>
           </div>
         </header>
 
-        {/* Content Body */}
-        <main className="p-8 space-y-7 max-w-7xl mx-auto w-full">
-          
-          {/* Header Title Section */}
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-              <h1 className="text-2xl font-black text-foreground tracking-tight font-poppins">
-                Autonomous Security Operations Cockpit
-              </h1>
-              <p className="text-xs text-muted font-light mt-0.5">
-                AI-Native email parsing sandbox, live threat intelligence & shortest-path lateral attack graph
-              </p>
-            </div>
-            
-            {/* View Filter Pill */}
-            <div className="flex bg-card p-1 rounded-xl border border-border shadow-sm text-xs font-mono self-start">
-              <button
-                onClick={() => setActiveNav('overview')}
-                className={`px-3.5 py-1.5 rounded-lg transition cursor-pointer font-bold ${
-                  activeNav === 'overview'
-                    ? 'bg-neon-cyan text-black shadow-glow-cyan'
-                    : 'text-muted hover:text-foreground'
-                }`}
-              >
-                OVERVIEW
-              </button>
-              <button
-                onClick={() => setActiveNav('stream')}
-                className={`px-3.5 py-1.5 rounded-lg transition cursor-pointer font-bold ${
-                  activeNav === 'stream'
-                    ? 'bg-neon-cyan text-black shadow-glow-cyan'
-                    : 'text-muted hover:text-foreground'
-                }`}
-              >
-                TELEMETRY
-              </button>
-              <button
-                onClick={() => setActiveNav('graph')}
-                className={`px-3.5 py-1.5 rounded-lg transition cursor-pointer font-bold ${
-                  activeNav === 'graph'
-                    ? 'bg-neon-cyan text-black shadow-glow-cyan'
-                    : 'text-muted hover:text-foreground'
-                }`}
-              >
-                GRAPH
-              </button>
-              <button
-                onClick={() => setActiveNav('surface')}
-                className={`px-3.5 py-1.5 rounded-lg transition cursor-pointer font-bold ${
-                  activeNav === 'surface'
-                    ? 'bg-neon-cyan text-black shadow-glow-cyan'
-                    : 'text-muted hover:text-foreground'
-                }`}
-              >
-                EXPOSURE
+        {/* Conditional Views or Overview Dashboard */}
+        {activeNav === 'agents' ? (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold">Autonomous Multi-Agent Telemetry</h2>
+              <button onClick={() => setActiveNav('overview')} className="text-xs text-[#2563eb] font-semibold hover:underline">
+                ← Back to Overview
               </button>
             </div>
+            <AgentLiveStreamVisualizer events={events} isStreaming={isStreaming} onStartScenario={handleStartStream} />
           </div>
-
-          {/* 4 Tactical Metric Cards with Rotating Radar Border on Critical Tile */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            
-            {/* Card 1: Critical Threat Tile with Rotating Radar Glow */}
-            <div className="bg-card border border-border p-5 rounded-2xl shadow-tactical-card space-y-3 relative overflow-hidden radar-border-glow">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-bold uppercase font-mono text-muted tracking-widest">
-                  ATTACK SURFACE SCORE
-                </span>
-                <div className="text-neon-rose drop-shadow-[0_0_8px_rgba(255,0,85,0.6)]">
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-                </div>
-              </div>
-              <div className="flex items-baseline justify-between">
-                <div className="text-3xl font-black font-poppins tracking-tight text-neon-rose">
-                  88.4<span className="text-xs font-normal text-muted">/100</span>
-                </div>
-                <span className="text-[9px] font-mono font-bold text-neon-rose bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/30 uppercase">
-                  +12.4% alert
-                </span>
-              </div>
-              <div className="h-7 w-full pt-1">
-                <svg className="w-full h-full" viewBox="0 0 120 28" fill="none">
-                  <path d="M0 20 Q 30 25, 60 12 T 120 4" stroke="#ff0055" strokeWidth="2" strokeLinecap="round" fill="none" />
-                  <path d="M0 20 Q 30 25, 60 12 T 120 4 L 120 28 L 0 28 Z" fill="#ff0055" opacity="0.12" />
-                </svg>
-              </div>
-              <p className="text-[11px] text-muted font-light">Internet-Facing OWA 15.1 Detected</p>
+        ) : activeNav === 'policies' ? (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold">Autonomous Response Governance & Policies</h2>
+              <button onClick={() => setActiveNav('overview')} className="text-xs text-[#2563eb] font-semibold hover:underline">
+                ← Back to Overview
+              </button>
             </div>
-
-            {/* Card 2 */}
-            <div className="bg-card border border-border p-5 rounded-2xl shadow-tactical-card space-y-3 relative overflow-hidden">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-bold uppercase font-mono text-muted tracking-widest">
-                  CAMPAIGN INCIDENTS
-                </span>
-                <div className="text-neon-amber">
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
-                </div>
-              </div>
-              <div className="flex items-baseline justify-between">
-                <div className="text-3xl font-black font-poppins tracking-tight text-neon-amber">
-                  500<span className="text-xs font-normal text-muted"> Mails</span>
-                </div>
-                <span className="text-[9px] font-mono font-bold text-neon-amber bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30 uppercase">
-                  Dedup Rollup
-                </span>
-              </div>
-              <div className="h-7 w-full pt-1">
-                <svg className="w-full h-full" viewBox="0 0 120 28" fill="none">
-                  <path d="M0 14 Q 35 2, 70 18 T 120 8" stroke="#ffaa00" strokeWidth="2" strokeLinecap="round" fill="none" />
-                  <path d="M0 14 Q 35 2, 70 18 T 120 8 L 120 28 L 0 28 Z" fill="#ffaa00" opacity="0.12" />
-                </svg>
-              </div>
-              <p className="text-[11px] text-muted font-light">Collapsed to CMP-2024-NTLM-01</p>
-            </div>
-
-            {/* Card 3 */}
-            <div className="bg-card border border-border p-5 rounded-2xl shadow-tactical-card space-y-3 relative overflow-hidden">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-bold uppercase font-mono text-muted tracking-widest">
-                  TARGET THREAT VECTOR
-                </span>
-                <div className="text-neon-cyan">
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                </div>
-              </div>
-              <div className="flex items-baseline justify-between">
-                <div className="text-2xl font-black font-poppins tracking-tight text-neon-cyan">
-                  CVE-2024-21413
-                </div>
-                <span className="text-[9px] font-mono font-bold text-neon-cyan bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/30 uppercase">
-                  CVSS 9.8
-                </span>
-              </div>
-              <div className="h-7 w-full pt-1">
-                <svg className="w-full h-full" viewBox="0 0 120 28" fill="none">
-                  <path d="M0 24 Q 40 8, 80 16 T 120 2" stroke="#00e5ff" strokeWidth="2" strokeLinecap="round" fill="none" />
-                  <path d="M0 24 Q 40 8, 80 16 T 120 2 L 120 28 L 0 28 Z" fill="#00e5ff" opacity="0.12" />
-                </svg>
-              </div>
-              <p className="text-[11px] text-muted font-light">Zero-Click Moniker URI Link</p>
-            </div>
-
-            {/* Card 4 */}
-            <div className="bg-card border border-border p-5 rounded-2xl shadow-tactical-card space-y-3 relative overflow-hidden">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-bold uppercase font-mono text-muted tracking-widest">
-                  AUTONOMOUS GOVERNANCE
-                </span>
-                <div className="text-neon-emerald">
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
-                </div>
-              </div>
-              <div className="flex items-baseline justify-between">
-                <div className="text-2xl font-black font-poppins tracking-tight text-neon-emerald">
-                  Level 1 Policy
-                </div>
-                <span className="text-[9px] font-mono font-bold text-neon-emerald bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30 uppercase">
-                  HITL Gate
-                </span>
-              </div>
-              <div className="h-7 w-full pt-1">
-                <svg className="w-full h-full" viewBox="0 0 120 28" fill="none">
-                  <path d="M0 6 Q 40 18, 80 4 T 120 12" stroke="#00ff88" strokeWidth="2" strokeLinecap="round" fill="none" />
-                  <path d="M0 6 Q 40 18, 80 4 T 120 12 L 120 28 L 0 28 Z" fill="#00ff88" opacity="0.12" />
-                </svg>
-              </div>
-              <p className="text-[11px] text-muted font-light">Human Authorization Enforced</p>
-            </div>
-
-          </div>
-
-          {/* Navigation Views */}
-          {(activeNav === 'overview' || activeNav === 'stream') && (
-            <AgentLiveStreamVisualizer
-              events={events}
-              isStreaming={isStreaming}
-              onClear={() => setEvents([])}
-            />
-          )}
-
-          {(activeNav === 'overview' || activeNav === 'incidents') && (
-            <div className="bg-card border border-border rounded-2xl p-6 shadow-tactical-card space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm font-bold tracking-wider text-foreground font-mono uppercase">
-                    ACTIVE EXPLOITATION INCIDENTS
-                  </h3>
-                  <p className="text-xs text-muted font-light mt-0.5">
-                    Real-time correlation of incoming email, rendering parser anomalies & session compromise
-                  </p>
-                </div>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs text-foreground">
-                  <thead className="bg-card-secondary text-muted uppercase font-mono text-[10px] border-b border-border">
-                    <tr>
-                      <th className="p-3.5">Severity</th>
-                      <th className="p-3.5">Incident Title</th>
-                      <th className="p-3.5">Target Identity</th>
-                      <th className="p-3.5">Mail Platform</th>
-                      <th className="p-3.5">Interaction State</th>
-                      <th className="p-3.5">Confidence</th>
-                      <th className="p-3.5 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border font-poppins">
-                    {incidents.map((inc) => (
-                      <tr key={inc.incident_id} className="hover:bg-hover-bg transition-colors">
-                        <td className="p-3.5">
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-[10px] font-mono font-bold bg-rose-500/10 text-rose-400 border border-rose-500/30 shadow-[0_0_8px_rgba(255,0,85,0.2)]">
-                            <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
-                            {inc.severity}
-                          </span>
-                        </td>
-                        <td className="p-3.5 font-semibold text-foreground">
-                          {inc.title}
-                          <span className="block text-[10px] text-neon-cyan font-mono mt-0.5 font-normal">{inc.cve}</span>
-                        </td>
-                        <td className="p-3.5 font-mono text-foreground font-medium">{inc.target_identity}</td>
-                        <td className="p-3.5 text-muted font-light">{inc.mail_platform}</td>
-                        <td className="p-3.5 font-bold text-neon-rose font-mono text-[11px]">{inc.interaction_required}</td>
-                        <td className="p-3.5 font-mono text-neon-emerald font-bold">
-                          {(inc.confidence * 100).toFixed(0)}%
-                        </td>
-                        <td className="p-3.5 text-right">
-                          <button
-                            onClick={() => setSelectedIncident(inc)}
-                            className="px-3.5 py-1.5 bg-card border border-border hover:bg-hover-bg text-foreground rounded-xl text-xs font-bold transition cursor-pointer font-mono"
-                          >
-                            INVESTIGATE
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {(activeNav === 'overview' || activeNav === 'graph') && (
-            <AttackGraphVisualizer />
-          )}
-
-          {(activeNav === 'overview' || activeNav === 'surface') && (
             <ExposureView />
-          )}
-        </main>
-      </div>
+          </div>
+        ) : activeNav === 'reports' ? (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold">Attack Graph & Lateral Movement Pathfinding</h2>
+              <button onClick={() => setActiveNav('overview')} className="text-xs text-[#2563eb] font-semibold hover:underline">
+                ← Back to Overview
+              </button>
+            </div>
+            <AttackGraphVisualizer onSelectAttackChain={() => {}} />
+          </div>
+        ) : (
+          <>
+            {/* Top Metrics Row */}
+            <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3.5">
+              <div className="bg-white border border-[#e7e9ee] rounded-xl p-[18px_19px] shadow-[0_1px_2px_rgba(16,24,40,0.04),0_8px_24px_rgba(16,24,40,0.035)]">
+                <div className="flex justify-between text-[#737986] text-xs font-medium">
+                  <span>Emails analyzed</span>
+                  <span>24h</span>
+                </div>
+                <div className="text-[27px] font-bold tracking-[-0.045em] my-3 text-[#111318]">2,481</div>
+                <div className="text-[11px] text-[#16945b] font-medium">↑ 18.4% vs. yesterday</div>
+              </div>
 
-      {/* Forensic Detail Slide-over Drawer */}
+              <div className="bg-white border border-[#e7e9ee] rounded-xl p-[18px_19px] shadow-[0_1px_2px_rgba(16,24,40,0.04),0_8px_24px_rgba(16,24,40,0.035)]">
+                <div className="flex justify-between text-[#737986] text-xs font-medium">
+                  <span>Threats detected</span>
+                  <span>24h</span>
+                </div>
+                <div className="text-[27px] font-bold tracking-[-0.045em] my-3 text-[#111318]">37</div>
+                <div className="text-[11px] text-[#16945b] font-medium">↑ 6.2% vs. yesterday</div>
+              </div>
+
+              <div className="bg-white border border-[#e7e9ee] rounded-xl p-[18px_19px] shadow-[0_1px_2px_rgba(16,24,40,0.04),0_8px_24px_rgba(16,24,40,0.035)]">
+                <div className="flex justify-between text-[#737986] text-xs font-medium">
+                  <span>Active investigations</span>
+                  <span>Now</span>
+                </div>
+                <div className="text-[27px] font-bold tracking-[-0.045em] my-3 text-[#111318]">12</div>
+                <div className="text-[11px] text-[#737986] font-medium">4 awaiting review</div>
+              </div>
+
+              <div className="bg-white border border-[#e7e9ee] rounded-xl p-[18px_19px] shadow-[0_1px_2px_rgba(16,24,40,0.04),0_8px_24px_rgba(16,24,40,0.035)]">
+                <div className="flex justify-between text-[#737986] text-xs font-medium">
+                  <span>Detection confidence</span>
+                  <span>30d</span>
+                </div>
+                <div className="text-[27px] font-bold tracking-[-0.045em] my-3 text-[#111318]">99.2%</div>
+                <div className="text-[11px] text-[#16945b] font-medium">↑ 0.8% this month</div>
+              </div>
+            </section>
+
+            {/* Middle Grid: Activity Chart & Agent Status */}
+            <section className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.75fr)_minmax(300px,0.75fr)] gap-3.5 mb-3.5">
+              
+              {/* Agentic Detection Activity Chart */}
+              <div className="bg-white border border-[#e7e9ee] rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.04),0_8px_24px_rgba(16,24,40,0.035)]">
+                <div className="flex justify-between items-center p-[17px_19px] border-b border-[#e7e9ee]">
+                  <div>
+                    <div className="text-[13px] font-bold text-[#111318]">Agentic Detection Activity</div>
+                    <div className="text-[11px] text-[#737986] mt-1">Continuous autonomous investigation · last 24 hours</div>
+                  </div>
+                  <div className="inline-flex items-center gap-1.5 text-[10px] text-[#16945b] font-[650] bg-[#eaf8f1] px-2 py-1 rounded-full">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#16945b] animate-pulse"></span>
+                    <span>Agents active</span>
+                  </div>
+                </div>
+
+                <div className="p-[10px_18px_15px]">
+                  <div className="h-[205px] relative overflow-hidden">
+                    <svg viewBox="0 0 800 210" preserveAspectRatio="none" className="w-full h-full">
+                      <g stroke="#eef0f3" strokeWidth="1">
+                        <line x1="0" y1="35" x2="800" y2="35" />
+                        <line x1="0" y1="82" x2="800" y2="82" />
+                        <line x1="0" y1="129" x2="800" y2="129" />
+                        <line x1="0" y1="176" x2="800" y2="176" />
+                      </g>
+                      {/* Active Investigations Solid Blue Path */}
+                      <path
+                        d="M0 170 C35 166 40 148 72 153 S110 130 142 142 S180 111 214 126 S253 83 286 104 S320 91 352 99 S390 69 425 88 S465 54 500 77 S538 65 570 72 S606 40 640 59 S680 46 710 55 S754 28 800 39"
+                        fill="none"
+                        stroke="#2563eb"
+                        strokeWidth="2.5"
+                      />
+                      {/* Baseline Dashed Path */}
+                      <path
+                        d="M0 192 C50 186 80 188 120 178 S180 182 220 166 S285 172 320 157 S385 165 420 145 S470 153 510 138 S570 143 610 126 S675 132 715 110 S765 116 800 94"
+                        fill="none"
+                        stroke="#b9c2d2"
+                        strokeWidth="1.5"
+                        strokeDasharray="5 5"
+                      />
+                      {/* Glowing Current Point */}
+                      <circle cx="640" cy="59" r="4.5" fill="#fff" stroke="#2563eb" strokeWidth="2" />
+                    </svg>
+                  </div>
+                  <div className="flex gap-4 text-[10px] text-[#737986] px-1 font-medium items-center">
+                    <span className="flex items-center">
+                      <span className="w-[7px] h-[7px] rounded-full inline-block mr-1.5 bg-[#2563eb]"></span>
+                      Investigations
+                    </span>
+                    <span className="flex items-center">
+                      <span className="w-[7px] h-[7px] rounded-full inline-block mr-1.5 bg-[#b9c2d2]"></span>
+                      Baseline
+                    </span>
+                    <span className="ml-auto text-[#9aa0aa] font-mono">
+                      00:00 &nbsp;&nbsp; 06:00 &nbsp;&nbsp; 12:00 &nbsp;&nbsp; 18:00 &nbsp;&nbsp; Now
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Agent Status Card */}
+              <div className="bg-white border border-[#e7e9ee] rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.04),0_8px_24px_rgba(16,24,40,0.035)]">
+                <div className="flex justify-between items-center p-[17px_19px] border-b border-[#e7e9ee]">
+                  <div className="text-[13px] font-bold text-[#111318]">Agent Status</div>
+                  <div className="text-[11px] text-[#737986] font-medium">4 / 4 online</div>
+                </div>
+                <div className="py-1.5 divide-y divide-[#f0f1f3]">
+                  <div className="flex items-center gap-3 px-[18px] py-3.5">
+                    <div className="w-[30px] h-[30px] rounded-lg bg-[#f4f5f7] grid place-items-center text-[13px] font-bold text-[#111318]">
+                      ⌁
+                    </div>
+                    <div className="flex-1">
+                      <b className="block text-xs text-[#111318]">Recon Agent</b>
+                      <span className="text-[10px] text-[#737986]">Headers · URLs · infrastructure</span>
+                    </div>
+                    <span className="text-[10px] px-2 py-1 rounded-full bg-[#eaf8f1] text-[#16945b] font-[650]">
+                      Operational
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-3 px-[18px] py-3.5">
+                    <div className="w-[30px] h-[30px] rounded-lg bg-[#f4f5f7] grid place-items-center text-[13px] font-bold text-[#111318]">
+                      ◌
+                    </div>
+                    <div className="flex-1">
+                      <b className="block text-xs text-[#111318]">Intent Agent</b>
+                      <span className="text-[10px] text-[#737986]">Context · social engineering</span>
+                    </div>
+                    <span className="text-[10px] px-2 py-1 rounded-full bg-[#eaf8f1] text-[#16945b] font-[650]">
+                      Operational
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-3 px-[18px] py-3.5">
+                    <div className="w-[30px] h-[30px] rounded-lg bg-[#f4f5f7] grid place-items-center text-[13px] font-bold text-[#111318]">
+                      ◇
+                    </div>
+                    <div className="flex-1">
+                      <b className="block text-xs text-[#111318]">Threat Intel Agent</b>
+                      <span className="text-[10px] text-[#737986]">IOC enrichment · reputation</span>
+                    </div>
+                    <span className="text-[10px] px-2 py-1 rounded-full bg-[#eaf8f1] text-[#16945b] font-[650]">
+                      Operational
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-3 px-[18px] py-3.5">
+                    <div className="w-[30px] h-[30px] rounded-lg bg-[#f4f5f7] grid place-items-center text-[13px] font-bold text-[#111318]">
+                      ↗
+                    </div>
+                    <div className="flex-1">
+                      <b className="block text-xs text-[#111318]">Response Agent</b>
+                      <span className="text-[10px] text-[#737986]">Containment · remediation</span>
+                    </div>
+                    <span className="text-[10px] px-2 py-1 rounded-full bg-[#f3f4f6] text-[#727782] font-[650]">
+                      Standby
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* Bottom Grid: Recent Investigations Table & Threat Queue */}
+            <section className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.75fr)_minmax(300px,0.75fr)] gap-3.5">
+              
+              {/* Recent Investigations Table */}
+              <div className="bg-white border border-[#e7e9ee] rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.04),0_8px_24px_rgba(16,24,40,0.035)] overflow-hidden">
+                <div className="flex justify-between items-center p-[17px_19px] border-b border-[#e7e9ee]">
+                  <div className="text-[13px] font-bold text-[#111318]">Recent Investigations</div>
+                  <button
+                    onClick={() => setActiveNav('investigations')}
+                    className="border border-[#e7e9ee] bg-white px-2.5 py-1.5 rounded-lg text-xs font-medium text-[#535963] hover:bg-[#f7f8fa] transition cursor-pointer"
+                  >
+                    View all
+                  </button>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr className="bg-[#fafbfc] border-b border-[#e7e9ee]">
+                        <th className="text-left text-[10px] text-[#969ba5] uppercase tracking-[0.06em] font-[650] p-[13px_17px]">
+                          Sender / subject
+                        </th>
+                        <th className="text-left text-[10px] text-[#969ba5] uppercase tracking-[0.06em] font-[650] p-[13px_17px]">
+                          Verdict
+                        </th>
+                        <th className="text-left text-[10px] text-[#969ba5] uppercase tracking-[0.06em] font-[650] p-[13px_17px]">
+                          Confidence
+                        </th>
+                        <th className="text-left text-[10px] text-[#969ba5] uppercase tracking-[0.06em] font-[650] p-[13px_17px]">
+                          Agent path
+                        </th>
+                        <th className="text-left text-[10px] text-[#969ba5] uppercase tracking-[0.06em] font-[650] p-[13px_17px]">
+                          Time
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#e7e9ee]">
+                      {investigations.map((item, idx) => (
+                        <tr
+                          key={idx}
+                          onClick={() => setSelectedIncident(item)}
+                          className="hover:bg-[#f8fafc] transition-colors cursor-pointer"
+                        >
+                          <td className="p-[13px_17px]">
+                            <span className="font-[650] text-[#20232a] text-[11px] block">{item.sender}</span>
+                            <small className="block text-[#989da7] font-normal text-[10px] mt-0.5">{item.subject}</small>
+                          </td>
+                          <td className="p-[13px_17px]">
+                            {item.verdict_type === 'critical' ? (
+                              <span className="inline-flex items-center px-2 py-1 rounded-full text-[9px] font-bold bg-[#fff0f0] text-[#d04444]">
+                                {item.verdict}
+                              </span>
+                            ) : item.verdict_type === 'review' ? (
+                              <span className="inline-flex items-center px-2 py-1 rounded-full text-[9px] font-bold bg-[#fff7e7] text-[#b7791f]">
+                                {item.verdict}
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center px-2 py-1 rounded-full text-[9px] font-bold bg-[#eaf8f1] text-[#16945b]">
+                                {item.verdict}
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-[13px_17px] text-[11px] font-medium text-[#505660]">{item.confidence}</td>
+                          <td className="p-[13px_17px] text-[11px] font-medium text-[#505660]">{item.agents_path}</td>
+                          <td className="p-[13px_17px] text-[11px] text-[#737986]">{item.time}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Threat Queue Card */}
+              <div className="bg-white border border-[#e7e9ee] rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.04),0_8px_24px_rgba(16,24,40,0.035)] pb-2">
+                <div className="flex justify-between items-center p-[17px_19px] border-b border-[#e7e9ee]">
+                  <div className="text-[13px] font-bold text-[#111318]">Threat Queue</div>
+                  <div className="text-[11px] text-[#737986] font-medium">12 active</div>
+                </div>
+                <div className="divide-y divide-[#e7e9ee]">
+                  <div className="flex items-center gap-3 p-[12px_18px]">
+                    <div className="text-[15px] font-bold text-[#111318] w-6">04</div>
+                    <div className="flex-1">
+                      <b className="text-[11px] text-[#111318] block">Credential harvesting</b>
+                      <span className="text-[10px] text-[#737986]">Awaiting response agent</span>
+                    </div>
+                    <div className="h-1 w-[60px] rounded-full bg-[#e9ebef] overflow-hidden">
+                      <div className="h-full bg-[#2563eb]" style={{ width: '86%' }}></div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3 p-[12px_18px]">
+                    <div className="text-[15px] font-bold text-[#111318] w-6">03</div>
+                    <div className="flex-1">
+                      <b className="text-[11px] text-[#111318] block">Business email compromise</b>
+                      <span className="text-[10px] text-[#737986]">Under investigation</span>
+                    </div>
+                    <div className="h-1 w-[60px] rounded-full bg-[#e9ebef] overflow-hidden">
+                      <div className="h-full bg-[#2563eb]" style={{ width: '64%' }}></div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3 p-[12px_18px]">
+                    <div className="text-[15px] font-bold text-[#111318] w-6">03</div>
+                    <div className="flex-1">
+                      <b className="text-[11px] text-[#111318] block">Malicious attachment</b>
+                      <span className="text-[10px] text-[#737986]">Awaiting analyst review</span>
+                    </div>
+                    <div className="h-1 w-[60px] rounded-full bg-[#e9ebef] overflow-hidden">
+                      <div className="h-full bg-[#2563eb]" style={{ width: '41%' }}></div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3 p-[12px_18px]">
+                    <div className="text-[15px] font-bold text-[#111318] w-6">02</div>
+                    <div className="flex-1">
+                      <b className="text-[11px] text-[#111318] block">Identity impersonation</b>
+                      <span className="text-[10px] text-[#737986]">Enrichment in progress</span>
+                    </div>
+                    <div className="h-1 w-[60px] rounded-full bg-[#e9ebef] overflow-hidden">
+                      <div className="h-full bg-[#2563eb]" style={{ width: '28%' }}></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </>
+        )}
+      </main>
+
+      {/* 3. Interactive Incident Detail Modal */}
       {selectedIncident && (
         <IncidentDetailModal
           incident={selectedIncident}
           onClose={() => setSelectedIncident(null)}
-          onApprove={(token) => {
+          onTriggerContainment={() => {
+            setSelectedIncident(null);
             setApprovalModalOpen(true);
           }}
         />
       )}
 
-      {/* Human Approval Gate Modal */}
+      {/* 4. Slide-to-Authorize Human Approval Modal */}
       <HumanApprovalModal
-        proposal={pendingProposal}
         isOpen={approvalModalOpen}
         onClose={() => setApprovalModalOpen(false)}
-        onApprove={async (token, comments) => {
-          return { success: true, audit_id: 'AUD-948201' };
-        }}
-        onReject={async (token, reason) => {
-          return { success: true };
+        proposal={pendingProposal}
+        onApprove={() => {
+          alert('Action Authorized! Email quarantined and CFO active sessions revoked successfully.');
+          setApprovalModalOpen(false);
         }}
       />
+
+      {/* 5. Live Stream Simulation Slide-over Modal */}
+      {investigationDrawerOpen && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex justify-end">
+          <div className="w-full max-w-2xl bg-white h-full shadow-2xl p-6 overflow-y-auto flex flex-col">
+            <div className="flex items-center justify-between pb-4 border-b border-[#e7e9ee] mb-4">
+              <div>
+                <h3 className="text-base font-bold text-[#111318]">Live Autonomous Investigation</h3>
+                <p className="text-xs text-[#737986]">Real-time LangGraph multi-agent reasoning stream</p>
+              </div>
+              <button
+                onClick={() => setInvestigationDrawerOpen(false)}
+                className="text-[#737986] hover:text-[#111318] p-1 rounded-lg hover:bg-[#f2f4f7]"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <div className="flex-1">
+              <AgentLiveStreamVisualizer events={events} isStreaming={isStreaming} onStartScenario={handleStartStream} />
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
