@@ -4,58 +4,118 @@
 
 @layer base {
   :root {
-    --background: #f6f8fc;
-    --foreground: #090e1a;
+    --background: #f5f7fb;
+    --foreground: #080d1a;
     --sidebar: #ffffff;
     --card: #ffffff;
     --card-secondary: #f8fafc;
     --border: #e2e8f0;
-    --border-subtle: #f1f5f9;
+    --border-subtle: #edf2f7;
     --muted: #64748b;
-    --muted-light: #94a3b8;
-    --input-bg: #f8fafc;
-    --hover-bg: #f1f5f9;
-    --accent-glow: rgba(59, 130, 246, 0.08);
+    --hover-bg: #edf2f7;
+    --accent-cyan: #0284c7;
+    --accent-rose: #e11d48;
+    --accent-amber: #d97706;
+    --accent-emerald: #059669;
   }
 
   .dark {
-    --background: #080c14;
+    --background: #04070f;
     --foreground: #f8fafc;
-    --sidebar: #0c111d;
-    --card: #0f172a;
-    --card-secondary: #090e1c;
-    --border: #1e293b;
-    --border-subtle: #162032;
-    --muted: #94a3b8;
-    --muted-light: #64748b;
-    --input-bg: #090d16;
-    --hover-bg: #1a2336;
-    --accent-glow: rgba(56, 189, 248, 0.06);
+    --sidebar: #070b16;
+    --card: #0a0f1d;
+    --card-secondary: #060913;
+    --border: #162035;
+    --border-subtle: #0f172a;
+    --muted: #8493ad;
+    --hover-bg: #111a2e;
+    --accent-cyan: #00e5ff;
+    --accent-rose: #ff0055;
+    --accent-amber: #ffaa00;
+    --accent-emerald: #00ff88;
   }
 }
 
 body {
-  font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Poppins', sans-serif;
   color: var(--foreground);
   background: var(--background);
-  transition: background-color 0.25s cubic-bezier(0.4, 0, 0.2, 1), color 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: background-color 0.2s ease, color 0.2s ease;
+  position: relative;
 }
 
-/* Glassmorphism & SaaS Card Styles */
-.glass-panel {
-  background-color: var(--card);
-  backdrop-filter: blur(16px);
-  border: 1px solid var(--border);
+/* Cinematic Subtle CRT Grain Texture */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.03'/%3E%3C/svg%3E");
+  opacity: 0.7;
 }
 
-.mesh-ambient {
+/* Ambient Tactical Mesh */
+.tactical-mesh {
   background-image: 
-    radial-gradient(at 0% 0%, var(--accent-glow) 0px, transparent 50%),
-    radial-gradient(at 100% 0%, rgba(139, 92, 246, 0.04) 0px, transparent 50%),
-    radial-gradient(at 50% 100%, rgba(6, 182, 212, 0.04) 0px, transparent 50%);
+    radial-gradient(at 0% 0%, rgba(0, 229, 255, 0.05) 0px, transparent 50%),
+    radial-gradient(at 100% 0%, rgba(255, 0, 85, 0.04) 0px, transparent 50%),
+    radial-gradient(at 50% 100%, rgba(0, 255, 136, 0.03) 0px, transparent 50%);
 }
 
-/* Custom Minimal Scrollbars */
+/* Conic Gradient Radar Glow for Critical Threat Tiles */
+@property --angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.radar-border-glow {
+  position: relative;
+  border-radius: 1rem;
+}
+.radar-border-glow::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(from var(--angle), transparent 75%, #ff0055 100%);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: radarRotate 4s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes radarRotate {
+  to { --angle: 360deg; }
+}
+
+/* Animated SVG Packet Flow */
+@keyframes packetFlow {
+  to { stroke-dashoffset: -20; }
+}
+.packet-stream {
+  stroke-dasharray: 4 6;
+  animation: packetFlow 1s linear infinite;
+}
+
+/* Typewriter Cursor */
+@keyframes blinkCursor {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.cursor-block {
+  display: inline-block;
+  width: 7px;
+  height: 13px;
+  background-color: var(--accent-cyan);
+  vertical-align: middle;
+  animation: blinkCursor 0.9s infinite;
+}
+
+/* Precision Scrollbars */
 ::-webkit-scrollbar {
   width: 5px;
   height: 5px;
@@ -64,12 +124,9 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.3);
-  border-radius: 9999px;
+  background: rgba(132, 147, 173, 0.3);
+  border-radius: 4px;
 }
 .dark ::-webkit-scrollbar-thumb {
-  background: rgba(51, 65, 85, 0.5);
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.5);
+  background: rgba(22, 32, 53, 0.8);
 }
