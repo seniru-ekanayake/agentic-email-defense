@@ -169,6 +169,10 @@ class SecurityGraphStreamer:
                 "incident_title": incident.get("title"),
                 "severity": incident.get("severity"),
                 "overall_risk_score": incident.get("overall_risk_score"),
-                "confidence": state.get("confidence")
+                "confidence": state.get("confidence"),
+                "incident_report": incident,
+                "pending_approvals": state.get("pending_approvals", []),
+                "executed_responses": state.get("executed_responses", [])
             }
         )
+
