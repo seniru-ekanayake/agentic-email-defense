@@ -1,7 +1,7 @@
 {
-  "name": "@fishermail/api",
+  "name": "@fishingmails/api",
   "version": "1.0.0",
-  "description": "Deterministic Fastify API Gateway for FisherMail Autonomous Email Defense",
+  "description": "Deterministic Fastify API Gateway for FishingMails Autonomous Email Defense",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",

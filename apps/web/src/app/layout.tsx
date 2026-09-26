@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'FisherMail • Autonomous Email Exploitation Detection & Response',
+  title: 'FishingMails • Autonomous Email Exploitation Detection & Response',
   description: 'Autonomous Defense for Zero-Click & Low-Interaction Email Exploitation',
 };
 
