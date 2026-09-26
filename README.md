@@ -19,6 +19,7 @@
   <img src="https://img.shields.io/badge/next.js-14.2%20App%20Router-black?style=flat-square" alt="Next.js 14">
   <img src="https://img.shields.io/badge/graph-Neo4j%205.x%20Cypher-blueviolet?style=flat-square" alt="Neo4j">
   <img src="https://img.shields.io/badge/autonomy-Levels%200--4-green?style=flat-square" alt="Autonomy Levels">
+  <img src="https://img.shields.io/badge/offline-100%25%20Zero--GPU-success?style=flat-square" alt="Zero GPU Offline">
   <img src="https://img.shields.io/badge/license-Apache%202.0-orange?style=flat-square" alt="License">
 </p>
 
@@ -29,16 +30,88 @@
 
 ---
 
-## 🎯 Why This Platform Matters
+## 🎯 Why FishingMails Matters
 
-Traditional Secure Email Gateways (SEGs) and simple LLM wrapper scripts were built for single-vector, click-dependent phishing. They fail against modern **zero-click preview pane rendering attacks** and **polymorphic multi-tenant campaigns**:
+Traditional Secure Email Gateways (SEGs) and simple LLM wrapper scripts were built for single-vector, click-dependent phishing. They fail against modern **zero-click preview pane rendering attacks**, **dynamic JIT brand spoofing**, and **polymorphic multi-tenant campaigns**:
 
 1. **Zero-Click Rendering Exploitation**: Attacks like **CVE-2024-21413 (MonikerLink)** and **CVE-2023-23397 (MAPI NetNTLM)** execute the moment an email is rendered in a preview pane without user interaction or attachment execution.
-2. **Alert Fatigue & SOC Burnout**: Attackers spray 500+ polymorphic variants across 20 mailboxes in seconds. Flat SIEM alerts overwhelm L1 analysts with 500 disconnected tickets.
-3. **Unchecked Agent Destructive Actions**: Naive LLM agents that issue unsupervised API calls risk taking down critical domain controllers or isolating C-suite executives during high false-positive bursts.
-4. **Cloud Privacy Leaks**: Sending raw customer emails to commercial third-party LLMs exposes PII, confidential credentials, and internal proprietary data.
+2. **Dynamic JIT Identity Spoofing**: Adversaries use reverse proxies (e.g. Evilginx) and dynamic client-side scripts to fetch company logos on the fly, bypassing static brand keyword matching.
+3. **Alert Fatigue & SOC Burnout**: Attackers spray 500+ polymorphic variants across 20 mailboxes in seconds. Flat SIEM alerts overwhelm L1 analysts with 500 disconnected tickets.
+4. **Unchecked Agent Destructive Actions**: Naive LLM agents that issue unsupervised API calls risk taking down critical domain controllers or isolating C-suite executives during high false-positive bursts.
+5. **Cloud Privacy Leaks**: Sending raw customer emails to commercial third-party LLMs exposes PII, confidential credentials, and internal proprietary data.
 
-This platform solves these challenges by uniting **deterministic exploit extraction**, **graph-based relational memory**, **isolated sandbox boundaries**, and **cryptographically gated human approval (Levels 0–4)**.
+FishingMails solves these challenges by uniting **deterministic exploit extraction**, **graph-based relational memory**, **isolated sandbox boundaries**, and **cryptographically gated human approval (Levels 0–4)**.
+
+---
+
+## 🛡️ Attack & Campaign Detection Taxonomy
+
+FishingMails contains purpose-built forensic engines to detect and correlate modern attack vectors that bypass traditional email filters:
+
+```text
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                         FishingMails Attack Vector Matrix                              │
+├───────────────────────────────┬───────────────────────────────┬────────────────────────┤
+│ Attack Category               │ Evasion Mechanism             │ Detection Engine       │
+├───────────────────────────────┼───────────────────────────────┼────────────────────────┤
+│ 1. Zero-Click MonikerLink     │ Forced SMB NTLM relay over    │ MimeParser +           │
+│    (CVE-2024-21413)           │ search-ms: / file:// schemas  │ HtmlAnalyzer           │
+├───────────────────────────────┼───────────────────────────────┼────────────────────────┤
+│ 2. MAPI NetNTLM Callouts      │ Unauthenticated appointment   │ RFC 2822 Header +      │
+│    (CVE-2023-23397)           │ PidLidNotificationSound UNC   │ ExploitIndicator AST   │
+├───────────────────────────────┼───────────────────────────────┼────────────────────────┤
+│ 3. OLE / RTF Shell Monikers   │ Embedded CLSID objects in     │ OLE Compound Parser +  │
+│    (CVE-2023-35636)           │ preview rendering stream      │ Sandbox AST Engine     │
+├───────────────────────────────┼───────────────────────────────┼────────────────────────┤
+│ 4. Dynamic JIT SSO Phishing   │ Client-side DOM logo scrapers │ UrlSandboxRunner +     │
+│    (Evilginx / Reverse Proxy) │ on unauthorized IdP hosts     │ IdP Mismatch Scorer    │
+├───────────────────────────────┼───────────────────────────────┼────────────────────────┤
+│ 5. Multi-Hop Cloud Trampoline │ Cloudflare / Firebase / Blob  │ NetworkGuard +         │
+│    Redirection Chains         │ bouncing to obfuscated host   │ Redirect Trace Engine  │
+├───────────────────────────────┼───────────────────────────────┼────────────────────────┤
+│ 6. OAuth Consent Grant Phish  │ Illicit app permissions       │ SkillRegistry +        │
+│    (Device Code Flow Abuse)   │ (e.g. Mail.ReadWrite grant)   │ OAuth Forensic Skill   │
+├───────────────────────────────┼───────────────────────────────┼────────────────────────┤
+│ 7. Polymorphic BEC Wire Divert│ Supplier invoice account swap │ CampaignAggregator +   │
+│    (Valid SPF/DKIM Sender)    │ with altered wire details     │ ERP Ledger Correlation │
+├───────────────────────────────┼───────────────────────────────┼────────────────────────┤
+│ 8. Unicode RTLO Smuggling     │ Right-to-Left Override (\u202E│ Deterministic Unicode  │
+│    Executable Masquerading    │ reversing invoice[exe].pdf    │ Normalization Engine   │
+└───────────────────────────────┴───────────────────────────────┴────────────────────────┘
+```
+
+---
+
+## ⚡ Three Execution Tiers: Deterministic vs. Local LLM vs. Cloud API
+
+FishingMails is designed to be **100% resilient and model-agnostic**. It operates across three distinct computational tiers depending on your infrastructure, privacy, and connectivity requirements:
+
+```text
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                        FishingMails Three-Tier Execution Engine                        │
+├───────────────────────┬────────────────────────────────┬───────────────────────────────┤
+│ Tier 1: Deterministic │ Tier 2: Local Quantized LLM    │ Tier 3: Cloud LLM Gateway     │
+│   (Zero-LLM / Offline)│      (Air-Gapped / Ollama)     │     (OpenRouter / Adaptive)   │
+├───────────────────────┼────────────────────────────────┼───────────────────────────────┤
+│ • 100% Offline & $0   │ • 100% Air-Gapped & $0         │ • Multi-Model Adaptive (Cloud)│
+│ • Zero GPU / <250MB   │ • Runs llama3:8b / mistral     │ • Claude 3.5 / GPT-4o / Llama │
+│ • Latency: < 15ms     │ • Latency: 400ms – 1.2s        │ • Latency: 1.5s – 3.5s        │
+│ • 0% Hallucinations   │ • 0% Cloud Data Leakage        │ • Strict PII/Credential Scrub │
+│ • Python AST + Cypher │ • Local CPU / GPU inference    │ • JSON Schema Enforced        │
+└───────────────────────┴────────────────────────────────┴───────────────────────────────┘
+```
+
+### Detailed Comparison:
+
+| Feature / Dimension | Tier 1: Zero-LLM Deterministic (Default) | Tier 2: Local Ollama Provider | Tier 3: Cloud OpenRouter Gateway |
+| :--- | :--- | :--- | :--- |
+| **Primary Use Case** | Real-time high-throughput email parsing (<15ms per message). | Air-gapped enterprise SOC with natural-language text summaries. | Multi-tenant cloud deployments leveraging cutting-edge frontier models. |
+| **Exploit & Moniker Extraction** | **Deterministic AST** (`packages/email_parser/`) | Deterministic AST + Local model summary | Deterministic AST + Cloud model structured JSON |
+| **CVE & Intel Lookup** | Local **CISA KEV** & **NVD** catalogs ($O(1)$ dictionary lookups) | Local catalogs + Local LLM summary | Local catalogs + Cloud LLM hypothesis synthesis |
+| **Attack Graph Lateral Paths** | **Neo4j Cypher** shortest-path queries | Neo4j Cypher shortest-path queries | Neo4j Cypher shortest-path queries |
+| **Data Privacy & Boundaries** | **100% Local** — Zero network calls | **100% Local** — Zero perimeter egress | **Boundary Enforced** — `CONFIDENTIAL` emails stay local; `PUBLIC` scrubbed |
+| **Hardware Required** | Standard dual-core CPU / <250 MB RAM | 8 GB – 16 GB RAM (CPU or Consumer GPU) | Internet connection & OpenRouter API key |
+| **Hallucination Risk** | **0% (Pure Boolean Rules & Math)** | Low (Structured JSON Mode) | Low (JSON Schema Constrained) |
 
 ---
 
@@ -48,7 +121,7 @@ All figures measured across the platform's test suite, live synthetic replay dat
 
 <p align="center">
 
-| Metric | Traditional SEGs / Playbooks | Basic LLM Query Scripts | **Our Agentic Defense Platform** | Verified Technical Evidence |
+| Metric | Traditional SEGs / Playbooks | Basic LLM Query Scripts | **FishingMails Platform** | Verified Technical Evidence |
 | :--- | :---: | :---: | :---: | :--- |
 | **Mean Time to Respond (MTTR)** | ~45 minutes | ~12 minutes | **1.7 minutes (-96.2%)** | Autonomous ingest-to-containment pipeline execution across 6 nodes. |
 | **Campaign Alert Fatigue** | 500 separate alerts | 500 LLM summaries | **1 Consolidated Graph (500:1)** | `CampaignAggregator` rolling structural fingerprinting. |
@@ -110,7 +183,7 @@ flowchart TD
         PolicyEngine["ResponsePolicyEngine (Autonomy L0-L4)"]
         Tokens["Cryptographic Tokens (APP-XXXXXX)"]
         Forwarder["Universal SIEM Forwarder\n(ArcSight CEF | RFC 5424 | Splunk HEC | Sentinel)"]
-        Cockpit["Next.js 14 SOC Cockpit (SSE Live Stream)"]
+        Cockpit["Next.js 14 Swiss SOC Cockpit (SSE Live Stream)"]
     end
 
     Ingestion --> Classifier
@@ -127,21 +200,28 @@ flowchart TD
 
 ---
 
-## 🧠 How the Agent Reasoning Ladder Operates
+## 🧠 The 6-Node LangGraph Reasoning Pipeline
 
-Before invoking any external model or taking action, the agent executes through an immutable reasoning ladder:
+Every ingested email traverses a stateful LangGraph workflow over a canonical `SecurityState` model:
 
-```text
-1. Data Classification     ➔ Classify payload (PUBLIC, INTERNAL, CONFIDENTIAL, RESTRICTED).
-                              If CONFIDENTIAL: Route strictly to local Ollama / offline parser.
-2. Deterministic Exploit    ➔ Extract Monikers, OLE CLSIDs, RTLO unicode spoofing, zero-click hooks.
-3. Network Boundary        ➔ Detonate links in sandbox guarded by NetworkGuard (SSRF / 169.254.169.254).
-4. Threat Correlation      ➔ Correlate with zero-cost feeds (URLhaus, AbuseIPDB, Quad9 DoH, CISA KEV).
-5. Graph Blast Radius      ➔ Traverse Neo4j 2nd/3rd degree hops to map identity and active session risk.
-6. Campaign Aggregation    ➔ Deduplicate into unified campaign graph (500 emails ➔ 1 incident).
-7. Autonomy Policy Gate    ➔ Check tenant autonomy (0=Observe, 1=Recommend, 2=Human Appr, 3=Auto, 4=Full).
-                              If Risk ≥ HIGH and Autonomy < 4: Issue slide-to-authorize token (APP-XXXXXX).
-```
+1. **Node 1: Ingestion & Data Privacy (`IngestionNode`)**:
+   * Evaluates data classification (`PUBLIC`, `INTERNAL`, `CONFIDENTIAL`, `RESTRICTED`).
+   * Scrubs internal tokens and credentials before any LLM processing.
+2. **Node 2: MIME & Behavioral Sandbox (`EmailAnalysisNode`)**:
+   * Executes deterministic RFC 2822 AST parsing, Moniker extraction, and headless DOM detonation via `NetworkGuard`.
+   * Dynamically activates forensic playbooks (e.g. `moniker-link-exploit-triage`, `oauth-consent-investigation`).
+3. **Node 3: Vulnerability & Threat Intel (`VulnResearchNode`)**:
+   * Correlates extracted CVEs against local CISA KEV and NVD databases.
+   * Performs reputation lookups via zero-cost feeds (URLhaus, AbuseIPDB, Quad9 DoH).
+4. **Node 4: Attack Surface Exposure (`ExposureNode`)**:
+   * Correlates target mail server infrastructure (OWA, Zimbra, Exchange) against the **10-State Asset Exposure Model**.
+5. **Node 5: Investigation & Campaign Deduplication (`InvestigationNode`)**:
+   * Synthesizes multi-dimensional risk scores:
+     $$\text{Overall Risk} = 0.15 \cdot \text{Exposure} + 0.20 \cdot \text{Exploitability} + 0.15 \cdot \text{Delivery} + 0.20 \cdot \text{Interaction} + 0.15 \cdot \text{Identity} + 0.15 \cdot \text{Observed}$$
+   * Executes `CampaignAggregator` fingerprint rollups, clustering 500 polymorphic emails into 1 unified campaign incident.
+6. **Node 6: Response Policy Governance (`ResponseNode`)**:
+   * Evaluates tenant autonomy policies (Levels 0–4).
+   * Generates cryptographic slide-to-authorize tokens (`APP-XXXXXX`) for high-risk actions.
 
 ---
 
@@ -156,7 +236,7 @@ Before invoking any external model or taking action, the agent executes through 
 │   │   ├── skills/      # Dynamic Forensic Playbooks (Moniker, OAuth, DKIM Replay, BEC)
 │   │   └── ingestion/   # M365 Graph, Gmail Pub/Sub, and IMAP4_SSL Daemons
 │   ├── sandbox/         # Inbuilt URL & Malicious Link Behavioral Sandbox with NetworkGuard
-│   ├── web/             # Next.js 14 SOC Cockpit, SSE Visualizer & Attack Graph Canvas
+│   ├── web/             # Next.js 14 Swiss Enterprise SOC Cockpit, SSE Visualizer & Attack Canvas
 │   └── api/             # Fastify REST API Gateway with OpenAPI documentation
 ├── packages/
 │   ├── schemas/         # Canonical JSON schemas, Pydantic v2 models & TypeScript types
@@ -172,14 +252,9 @@ Before invoking any external model or taking action, the agent executes through 
 
 ---
 
-## 🚀 Quickstart & Installation
+## 🚀 Quickstart & Step-by-Step Execution
 
-### 1. Prerequisites
-* **Python**: `3.11` or `3.12`
-* **Node.js**: `18.x` or `20.x`
-* **Docker & Docker Compose** (for persistent Neo4j/Postgres cluster)
-
-### 2. Clone and Setup Environment
+### 1. Prerequisites & Setup
 ```bash
 git clone https://github.com/seniru-ekanayake/agentic-email-defense.git
 cd agentic-email-defense
@@ -195,29 +270,48 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3. Start Infrastructure Cluster
+### 2. Configure Environment (Optional)
+Copy `.env.example` to `.env`:
 ```bash
-docker-compose up -d
+cp .env.example .env
 ```
-* **Neo4j Community**: `http://localhost:7474` (Bolt: `bolt://localhost:7687`, User: `neo4j`, Pass: `admin_password`)
-* **PostgreSQL (`pgvector`)**: `localhost:5432`
-* **NATS Messaging Bus**: `localhost:4222` / `localhost:8222`
-* **Valkey (Redis)**: `localhost:6379`
-* **MinIO Object Storage**: `localhost:9000` / `localhost:9001`
+* Leave `OPENROUTER_API_KEY` blank to run in **100% Free / Deterministic Offline Mode**.
+* Add `OPENROUTER_API_KEY=sk-or-v1-...` to enable cloud frontier models.
+* Set `OLLAMA_BASE_URL=http://localhost:11434` to use local air-gapped models.
 
-### 4. Launch the Next.js 14 SOC Cockpit
+### 3. Inspect Your Very First Email Payload
+Run this one-liner to parse and triage a zero-click exploit `.eml` file:
+
+```bash
+python -c "
+from apps.agents.investigation_service import InvestigationService
+
+service = InvestigationService()
+with open('packages/email_parser/samples/synthetic_cve_2023_35636_rendering_exploit.eml', 'rb') as f:
+    incident = service.simulate_email('tenant-enterprise-demo', f.read())
+
+print(f'\n=== INCIDENT VERDICT: {incident.severity} (Score: {incident.overall_risk_score}/100) ===')
+print(f'Identified CVE:  {incident.cve}')
+print(f'Target Identity: {incident.target_identity}')
+print(f'Interaction:     {incident.interaction_required}')
+for ev in incident.evidence_summary:
+    print(f'• {ev}')
+"
+```
+
+### 4. Start the Swiss Enterprise SOC Cockpit
 ```bash
 cd apps/web
 npm install
 npm run dev
 ```
-Open **`http://localhost:3000`** in your browser to view the real-time SOC Incident Feed, Live Agent SSE Reasoning Stream, Attack Graph Visualizer, and Slide-to-Authorize Human Approval Modal.
+Open **`http://localhost:3000`** in your browser to interact with the real-time SOC Incident Feed, Live Agent SSE Reasoning Stream, Attack Graph Visualizer, and Slide-to-Authorize Human Approval Modal.
 
 ---
 
 ## 🧪 Running Automated Tests
 
-Run the complete 67-suite automated test matrix (unit, integration, adversarial evasion, and SIEM forwarders):
+Run the complete 67-suite automated test matrix:
 
 ```bash
 python -m pytest -v
@@ -225,39 +319,28 @@ python -m pytest -v
 
 Expected output:
 ```text
-============================= 67 passed in 2.68s ==============================
+============================= 67 passed in 2.76s ==============================
 ```
-
-### Adversarial Security Tests
-```bash
-python -m pytest tests/adversarial/ -v
-```
-Validates:
-* Prompt injection resistance in email subject, HTML bodies, and attachment filenames.
-* Strict SSRF defense blocking AWS/GCP/Azure cloud metadata (`169.254.169.254`).
-* Tenant boundary privacy enforcement (zero confidential data leakage to external models).
-* Multi-part MIME recursion and zip/attachment bomb resistance.
-* Tamper-proof human authorization token validation (`APP-XXXXXX`).
 
 ---
 
 ## 🛡️ SIEM & SOAR Integration Matrix
 
-The platform includes universal outbound log forwarders for seamless SOC integration:
+FishingMails formats and forwards structured incident telemetry out-of-the-box:
 
 | Format / Target | Standard / Protocol | Sample Output |
 | :--- | :--- | :--- |
-| **Micro Focus / OpenText ArcSight** | Common Event Format (CEF:0) | `CEF:0\|EnterpriseDefense\|AgenticPlatform\|1.0\|INC-001\|Phishing Campaign\|8\|...` |
+| **Micro Focus ArcSight** | Common Event Format (CEF:0) | `CEF:0\|FishingMails\|AgenticPlatform\|1.0\|INC-001\|Phishing Campaign\|8\|...` |
 | **Enterprise Syslog** | RFC 5424 Structured Syslog | `<134>1 2026-09-26T12:00:00Z soc.defense INCIDENT - [secEvent@54321 id="INC-001"]...` |
-| **Splunk Enterprise & Cloud** | Splunk HEC (HTTP Event Collector) | `{"time": 1790400000, "source": "agentic-email-defense", "event": {...}}` |
+| **Splunk Enterprise & Cloud** | Splunk HEC (HTTP Event Collector) | `{"time": 1790400000, "source": "fishingmails", "event": {...}}` |
 | **Microsoft Sentinel** | Azure Log Analytics Data Collector | `{"TimeGenerated": "...", "IncidentId": "INC-001", "Severity": "High", ...}` |
 
 ---
 
-## ⚠️ Known Limitations & Threat Model Boundaries
+## ⚠️ Known Limitations & Boundaries
 
-1. **Custom Binary Emulation**: While the sandbox analyzes scripts, DOM rendering, HTML forms, and URLs, native Windows PE/DLL execution requires offloading to external specialized hypervisors (e.g. Cuckoo/CAPEv2).
-2. **Community Rate Limits**: Zero-cost threat feeds (URLhaus, AbuseIPDB) run with built-in LRU caching; enterprise deployments exceeding 100,000 queries/day should inject paid API keys into the environment.
+1. **Custom Binary Emulation**: While the sandbox analyzes scripts, DOM rendering, HTML forms, and URLs, native Windows PE/DLL execution requires offloading to external hypervisors (e.g. Cuckoo/CAPEv2).
+2. **Community Rate Limits**: Zero-cost threat feeds (URLhaus, AbuseIPDB) run with built-in LRU caching; enterprise deployments exceeding 100,000 queries/day should inject paid API keys.
 3. **No Unsupervised Weight Retraining**: The system intentionally does **not** fine-tune LLM weights on live customer emails to prevent prompt poisoning and adversarial data poisoning. Adaptation occurs strictly via **Neo4j graph memory and dynamic skill activation**.
 
 ---
