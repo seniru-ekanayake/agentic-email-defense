@@ -80,8 +80,18 @@ class MimeParser:
         # 4. Extract Body & Attachments (with recursion guard)
         text_plain, text_html, attachments, mime_structure, malformed_indicators = self._extract_parts(msg)
 
-        # 5. Analyze HTML body for active content & rendering exploits
-        html_features, urls, exploit_indicators, rendering_features = self.html_analyzer.analyze(text_html)
+        # 5. Analyze body for active content, unicode obfuscation & rendering exploits
+        body_to_analyze = text_html if text_html else text_plain
+        html_features, urls, exploit_indicators, rendering_features = self.html_analyzer.analyze(body_to_analyze)
+
+        # If plain text has distinct content, scan plain text for unicode obfuscation as well
+        if text_plain and text_html:
+            _, plain_urls, plain_exploits, plain_rend = self.html_analyzer.analyze(text_plain)
+            exploit_indicators.extend([e for e in plain_exploits if e not in exploit_indicators])
+            rendering_features.extend([r for r in plain_rend if r not in rendering_features])
+            for pu in plain_urls:
+                if not any(u.url == pu.url for u in urls):
+                    urls.append(pu)
 
         body_features = BodyFeatures(
             text_plain=text_plain or None,
@@ -92,6 +102,7 @@ class MimeParser:
         # 6. Behavioral Features & Risk Evidence
         behavioral_features: List[str] = []
         risk_evidence: List[RiskEvidence] = []
+
 
         if auth_res.spf == "fail" or auth_res.dmarc == "fail":
             behavioral_features.append("Sender authentication failed (SPF/DMARC failure)")

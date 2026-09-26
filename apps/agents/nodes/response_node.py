@@ -26,28 +26,65 @@ class ResponseNode:
         message_id = email_dict.get("message_id", "msg-unknown")
         target_user = email_dict.get("recipients", [{}])[0].get("address", "user@corp")
 
-        # 1. Formulate Defensive Proposals
-        proposals = [
-            ToolProposal(
-                tool_name="quarantine_email",
-                parameters={"message_id": message_id, "mailbox": target_user},
-                reasoning="Quarantine malicious email to prevent further rendering or user interaction."
-            ),
-            ToolProposal(
-                tool_name="revoke_session",
-                parameters={"user_id": target_user, "session_id": "active-owa-session"},
-                reasoning="Revoke active sessions to prevent NTLM/cookie relay exploitation."
-            ),
-            ToolProposal(
-                tool_name="search_mailbox_history",
-                parameters={"query": email_dict.get("sender", {}).get("domain", ""), "days_back": 14},
-                reasoning="Search historical mailboxes for related campaign activity from sender domain."
+        # 1. Formulate Defensive Proposals Grounded in Evidence
+        proposals: List[ToolProposal] = []
+        evidence_items = state.get("evidence", [])
+        scores = state.get("scores", {})
+        severity = scores.get("severity", "LOW")
+        overall_risk = scores.get("overall_risk_score", 0.0)
+
+        has_rendering_exploit = any("RENDERING_EXPLOIT" in str(e) or "search-ms" in str(e) or "file:" in str(e) for e in evidence_items)
+        has_forced_callout = any("FORCED_CALLOUT" in str(e) or "Forced UNC/SMB" in str(e) for e in evidence_items)
+        has_phish = any("Deceptive link" in str(e) or "ACTIVE_SCRIPTING" in str(e) for e in evidence_items)
+        has_obfuscation = any("UNICODE" in str(e) or "HOMOGLYPH" in str(e) for e in evidence_items)
+        auth_failed = any("SPF/DMARC failure" in str(e) or "Sender Spoofing" in str(e) for e in evidence_items)
+
+
+        # Propose quarantine only if high risk, rendering exploit, or active phishing
+        if severity in ["HIGH", "CRITICAL"] or has_rendering_exploit or (has_phish and overall_risk >= 50):
+            proposals.append(
+                ToolProposal(
+                    tool_name="quarantine_email",
+                    parameters={"message_id": message_id, "mailbox": target_user},
+                    reasoning="Quarantine malicious email to prevent further rendering or user interaction."
+                )
             )
-        ]
+
+        # Propose session revocation ONLY if active forced callout / NTLM relay or credential theft is observed
+        if has_forced_callout:
+            proposals.append(
+                ToolProposal(
+                    tool_name="revoke_session",
+                    parameters={"user_id": target_user, "session_id": "active-owa-session"},
+                    reasoning="Revoke active sessions to prevent NTLM/cookie relay exploitation."
+                )
+            )
+
+        # Always safe informational query
+        if has_obfuscation or has_phish or auth_failed or overall_risk > 30:
+            sender_domain = email_dict.get("sender", {}).get("domain", "")
+            if sender_domain and not sender_domain.endswith(".invalid") and not sender_domain.endswith(".example"):
+                proposals.append(
+                    ToolProposal(
+                        tool_name="search_mailbox_history",
+                        parameters={"query": sender_domain, "days_back": 14},
+                        reasoning=f"Search historical mailboxes for related campaign activity from sender domain {sender_domain}."
+                    )
+                )
+
+        if not proposals:
+            proposals.append(
+                ToolProposal(
+                    tool_name="create_soc_ticket",
+                    parameters={"title": f"Logged email inspection from {email_dict.get('sender', {}).get('address')}", "severity": "LOW"},
+                    reasoning="Log inspection record for low-risk/benign email delivery."
+                )
+            )
 
         state["proposed_tools"] = [p.model_dump() for p in proposals]
         state.setdefault("executed_tools", [])
         state.setdefault("pending_approvals", [])
+
 
         # 2. Process proposals through ToolRegistry safety gates
         for prop in proposals:
