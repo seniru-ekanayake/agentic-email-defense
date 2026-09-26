@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Agentic Defense • Enterprise Email Exploitation Detection & Response',
-  description: 'AI-Native Email-Rendering & Application Exploitation Defense Platform',
+  title: 'FisherMail • Autonomous Email Exploitation Detection & Response',
+  description: 'Autonomous Defense for Zero-Click & Low-Interaction Email Exploitation',
 };
 
 export default function RootLayout({

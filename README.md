@@ -1,11 +1,15 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/Security-Autonomous%20SOC%20Agent-00e5ff?style=for-the-badge&logo=shield&logoColor=black" alt="Autonomous SOC Agent">
+  <img src="assets/logo.png" width="280" alt="FisherMail Logo">
 </p>
 
-<h1 align="center">Enterprise Agentic Email Defense</h1>
+<h1 align="center">FisherMail</h1>
 
 <p align="center">
-  <em>Autonomous detection, attack graph correlation, and policy-governed response for zero-click and low-interaction email exploitation.</em>
+  <em>He sits by the mailstream. He sees the hook. He cuts the line.</em>
+</p>
+
+<p align="center">
+  <strong>Autonomous detection, attack graph correlation, and policy-governed response for zero-click and low-interaction email exploitation.</strong>
 </p>
 
 <p align="center">
