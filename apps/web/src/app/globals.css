@@ -4,37 +4,55 @@
 
 @layer base {
   :root {
-    --background: #f8fafc;
-    --foreground: #0f172a;
+    --background: #f6f8fc;
+    --foreground: #090e1a;
     --sidebar: #ffffff;
     --card: #ffffff;
+    --card-secondary: #f8fafc;
     --border: #e2e8f0;
     --border-subtle: #f1f5f9;
     --muted: #64748b;
     --muted-light: #94a3b8;
-    --input-bg: #f1f5f9;
-    --hover-bg: #f8fafc;
+    --input-bg: #f8fafc;
+    --hover-bg: #f1f5f9;
+    --accent-glow: rgba(59, 130, 246, 0.08);
   }
 
   .dark {
-    --background: #090d16;
+    --background: #080c14;
     --foreground: #f8fafc;
-    --sidebar: #0d121f;
+    --sidebar: #0c111d;
     --card: #0f172a;
+    --card-secondary: #090e1c;
     --border: #1e293b;
-    --border-subtle: #172033;
+    --border-subtle: #162032;
     --muted: #94a3b8;
     --muted-light: #64748b;
     --input-bg: #090d16;
-    --hover-bg: #1e293b;
+    --hover-bg: #1a2336;
+    --accent-glow: rgba(56, 189, 248, 0.06);
   }
 }
 
 body {
+  font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--foreground);
   background: var(--background);
-  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
-  transition: background-color 0.2s ease, color 0.2s ease;
+  transition: background-color 0.25s cubic-bezier(0.4, 0, 0.2, 1), color 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Glassmorphism & SaaS Card Styles */
+.glass-panel {
+  background-color: var(--card);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--border);
+}
+
+.mesh-ambient {
+  background-image: 
+    radial-gradient(at 0% 0%, var(--accent-glow) 0px, transparent 50%),
+    radial-gradient(at 100% 0%, rgba(139, 92, 246, 0.04) 0px, transparent 50%),
+    radial-gradient(at 50% 100%, rgba(6, 182, 212, 0.04) 0px, transparent 50%);
 }
 
 /* Custom Minimal Scrollbars */
