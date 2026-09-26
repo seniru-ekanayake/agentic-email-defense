@@ -54,6 +54,23 @@ class Neo4jAttackGraphRepository(AttackGraphRepository):
     def is_connected(self) -> bool:
         return self._connected
 
+    def close(self):
+        """Gracefully close the Neo4j driver connection pool."""
+        if self._driver:
+            try:
+                self._driver.close()
+                logger.info("Neo4j driver connection closed.")
+            except Exception as e:
+                logger.warning(f"Error closing Neo4j driver: {e}")
+            finally:
+                self._connected = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
     def create_entity(
         self,
         entity_type: GraphEntityType,

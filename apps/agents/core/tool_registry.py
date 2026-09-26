@@ -183,31 +183,53 @@ class ToolRegistry:
         tool_name = pending["tool_name"]
         parameters = pending["parameters"]
         tenant_id = pending["tenant_id"]
-        
-        handler = self._handlers[tool_name]
-        result_output = handler(parameters)
-        
         audit_id = str(uuid.uuid4())
-        audit = AuditRecord(
-            audit_id=audit_id,
-            tenant_id=tenant_id,
-            tool_name=tool_name,
-            risk_level=self._tools[tool_name].risk_level,
-            parameters=parameters,
-            executed=True,
-            requires_approval=False,
-            caller_role=f"HUMAN_APPROVER:{approver_user_id}",
-            result_summary=f"Executed via human approval token {approval_token}"
-        )
-        self._audit_trail.append(audit)
         
-        return ToolExecutionResult(
-            tool_name=tool_name,
-            success=True,
-            executed=True,
-            output=result_output,
-            audit_id=audit_id
-        )
+        try:
+            handler = self._handlers[tool_name]
+            result_output = handler(parameters)
+            
+            audit = AuditRecord(
+                audit_id=audit_id,
+                tenant_id=tenant_id,
+                tool_name=tool_name,
+                risk_level=self._tools[tool_name].risk_level,
+                parameters=parameters,
+                executed=True,
+                requires_approval=False,
+                caller_role=f"HUMAN_APPROVER:{approver_user_id}",
+                result_summary=f"Executed via human approval token {approval_token}"
+            )
+            self._audit_trail.append(audit)
+            
+            return ToolExecutionResult(
+                tool_name=tool_name,
+                success=True,
+                executed=True,
+                output=result_output,
+                audit_id=audit_id
+            )
+        except Exception as exc:
+            logger.error(f"[TOOL ERROR] Error executing approved tool '{tool_name}': {exc}")
+            audit = AuditRecord(
+                audit_id=audit_id,
+                tenant_id=tenant_id,
+                tool_name=tool_name,
+                risk_level=self._tools[tool_name].risk_level,
+                parameters=parameters,
+                executed=False,
+                requires_approval=False,
+                caller_role=f"HUMAN_APPROVER:{approver_user_id}",
+                result_summary=f"Execution failed after approval: {exc}"
+            )
+            self._audit_trail.append(audit)
+            return ToolExecutionResult(
+                tool_name=tool_name,
+                success=False,
+                executed=False,
+                error=str(exc),
+                audit_id=audit_id
+            )
 
     def _register_default_tools(self):
         """Registers the core platform tools."""
