@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Agentic Email Exploitation Detection & Response',
-  description: 'Enterprise Email-Rendering & Application Exploitation Defense Platform',
+  title: 'Agentic Defense • Enterprise Email Exploitation Detection & Response',
+  description: 'AI-Native Email-Rendering & Application Exploitation Defense Platform',
 };
 
 export default function RootLayout({
@@ -12,8 +12,18 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className="antialiased bg-slate-950">{children}</body>
+    <html lang="en" className="dark">
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Poppins:wght@300;400;500;600;700;800;900&display=swap"
+          rel="stylesheet"
+        />
+      </head>
+      <body className="antialiased bg-background text-foreground font-poppins selection:bg-blue-500/20 selection:text-blue-500">
+        {children}
+      </body>
     </html>
   );
 }
