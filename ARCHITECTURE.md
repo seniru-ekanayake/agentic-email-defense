@@ -1,67 +1,25 @@
 # System Architecture & Technical Specifications
 
-## 1. High-Level Architecture Overview
+> **Canonical Specification Notice:**  
+> The comprehensive, verified architectural specification for FishingMails has been consolidated in [**`docs/ARCHITECTURE.md`**](file:///c:/Enterprise%20Agentic%20Email%20Exploitation%20Detection%20&%20Response%20Platform/docs/ARCHITECTURE.md).  
+> Please refer to [**`docs/ARCHITECTURE.md`**](file:///c:/Enterprise%20Agentic%20Email%20Exploitation%20Detection%20&%20Response%20Platform/docs/ARCHITECTURE.md) for the authoritative documentation covering:
+> - Canonical `InvestigationState` specifications
+> - Dual-planner architecture (`RuleBasedPlanner` vs `LLMPlanner`)
+> - Hypothesis formulation and evidence feedback loops
+> - `ToolRegistry` permission levels (0-4) and `SafetyGate` governance
+> - End-to-end data flow diagrams and Mermaid workflows
 
-The platform uses a decoupled, event-driven architecture that rigorously separates deterministic cybersecurity rules from agentic LLM reasoning.
+---
 
-```text
-┌─────────────────────────────────────────────────────────────┐
-│                    External Telemetry Ingestion             │
-│            (SMTP / EML / IMAP / Webmail Auth Logs)          │
-└──────────────────────────────┬──────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   Data Privacy Boundary                     │
-│               (DataClassificationEngine)                    │
-│      PUBLIC / INTERNAL ──▶ OpenRouter Gateway (Free)        │
-│      CONFIDENTIAL / RESTRICTED ──▶ Local Ollama / Det       │
-└──────────────────────────────┬──────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│            Deterministic Email & HTML Parser                │
-│    (MIME Structure / search-ms Monikers / UNC Callouts)     │
-└──────────────────────────────┬──────────────────────────────┘
-                               │
-                ┌──────────────┼──────────────┐
-                ▼              ▼              ▼
-       Isolated Sandbox  Threat Intel  Exposure Engine
-         (Playwright)     (NVD/KEV)    (OWA/Zimbra)
-                │              │              │
-                └──────────────┼──────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│               LangGraph Agent Orchestrator                  │
-│       Typed State Machine over canonical SecurityState      │
-│  Ingestion ──▶ Analysis ──▶ Vuln Research ──▶ Investigation │
-└──────────────────────────────┬──────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│               Attack Graph Repository (Neo4j)               │
-│ ThreatActor ──▶ Campaign ──▶ Email ──▶ CVE ──▶ Identity     │
-└──────────────────────────────┬──────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│             Policy-Gated Response Engine                    │
-│    Tenant Autonomy Levels (0-4) & Human Approval Gates      │
-└─────────────────────────────────────────────────────────────┘
-```
+## Quick Reference Summary
 
-## 2. Multi-Dimensional Scoring Formulation
+1. **Ingestion & Normalization**: RFC 822 / MIME emails are unpacked with strict bounds ($\le 10$ recursion depth, $\le 25\text{ MB}$ payload).
+2. **State & Evidence**: Telemetry is converted into typed, immutable, SHA-256 hash-verified `Evidence` objects.
+3. **Investigation Planning**:
+   - `RuleBasedPlanner` (`PRODUCTION VERIFIED`): Deterministic, sub-millisecond execution ($\approx 0.01\text{ s}$).
+   - `LLMPlanner` (`RUNTIME VERIFIED BUT NOT PRODUCTION READY`): Adaptive reasoning via OpenRouter API; mean latency $\approx 10.6\text{ s}$; automated fallback on rate-limits/errors.
+   - `HybridPlanner` (`HYBRID RUNTIME VERIFIED`): Dual-path consensus.
+4. **Execution Authority**: Language models propose actions; only `SafetyGate` and `ToolRegistry` have authorization to execute tools under tenant autonomy policy constraints (Levels 0–4).
+5. **Persistence**: Forensic ledgers and attack graphs are stored in SQLite by default, with Neo4j support when configured.
 
-The platform rejects "black-box" single scores in favor of transparent, evidence-backed mathematical scoring:
-
-$$\text{Overall Risk} = 0.15 \cdot \text{Exposure} + 0.20 \cdot \text{Exploitability} + 0.15 \cdot \text{Email Delivery} + 0.20 \cdot \text{Interaction} + 0.15 \cdot \text{Identity Impact} + 0.15 \cdot \text{Observed Attack}$$
-
-- **Interaction Requirement Scoring**:
-  - `NONE` (Zero-click): **100.0**
-  - `VIEW` (Preview pane render): **90.0**
-  - `HOVER`: **70.0**
-  - `CLICK`: **50.0**
-  - `OPEN_ATTACHMENT`: **40.0**
-  - `EXECUTE_ATTACHMENT`: **30.0**
-  - `MULTI_STEP`: **20.0**
+For full technical details, consult [**`docs/ARCHITECTURE.md`**](file:///c:/Enterprise%20Agentic%20Email%20Exploitation%20Detection%20&%20Response%20Platform/docs/ARCHITECTURE.md).
