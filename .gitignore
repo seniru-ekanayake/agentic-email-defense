@@ -71,6 +71,10 @@ apps/sandbox/temp_emails/
 scratch/
 data/neo4j/
 data/duckdb/
+data/*.db
+data/*.sqlite
+*.db
+*.sqlite
 *.log
 *.db-journal
 *.duckdb.tmp
