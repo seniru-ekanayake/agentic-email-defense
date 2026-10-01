@@ -176,6 +176,13 @@ class ToolDefinition(BaseModel):
     input_schema: Dict[str, Any]
     output_schema: Dict[str, Any]
     audit_required: bool = True
+    version: str = "1.0.0"
+    required_evidence: List[str] = Field(default_factory=list)
+    produced_evidence: List[str] = Field(default_factory=list)
+    cost: float = 0.0
+    expected_latency_ms: float = 10.0
+    network_requirements: str = "NONE"
+    failure_modes: List[str] = Field(default_factory=list)
 
 
 class ToolProposal(BaseModel):

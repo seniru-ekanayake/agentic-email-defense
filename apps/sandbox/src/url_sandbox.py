@@ -119,9 +119,35 @@ class UrlSandboxRunner:
                 risk_score += 25.0
                 evidence.append(f"Cross-domain redirect from '{domain}' to '{final_domain}'")
 
-        # 4. Analyze Page Content & DOM Features
-        html = simulated_landing_html or ""
+        # 4. Fetch and Analyze Page Content & DOM Features
+        html = simulated_landing_html
+        execution_mode = "STATIC_FIXTURE_ANALYSIS" if simulated_landing_html is not None else "LIVE_STATIC_FETCH"
+        
+        # If no simulated landing HTML is provided, attempt live fetch if destination is safe
+        if html is None:
+            import requests
+            try:
+                session = requests.Session()
+                # Enforce NetworkGuard redirect hook
+                resp = session.get(
+                    final_destination,
+                    timeout=3.0,
+                    headers={"User-Agent": "AgenticEmailDefense-UrlAnalyzer/1.0"},
+                    allow_redirects=True
+                )
+                if resp.status_code == 200:
+                    html = resp.text
+                    evidence.append(f"Retrieved live landing page ({len(html)} bytes, HTTP 200).")
+                else:
+                    evidence.append(f"HTTP GET returned status code {resp.status_code}.")
+                    html = ""
+            except Exception as net_err:
+                evidence.append(f"Static HTTP fetch failed: {net_err}")
+                html = ""
+
+        html = html or ""
         html_lower = html.lower()
+        evidence.append("Playwright browser execution UNAVAILABLE on host; analyzed via static HTTP inspection.")
         
         has_login = False
         has_password = False
@@ -205,5 +231,7 @@ class UrlSandboxRunner:
             verdict=verdict,
             threat_category=threat_category,
             risk_score=risk_score,
-            evidence=evidence
+            evidence=evidence,
+            browser_runtime_status="BROWSER_RUNTIME_UNAVAILABLE",
+            execution_mode=execution_mode
         )

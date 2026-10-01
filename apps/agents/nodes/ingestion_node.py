@@ -54,4 +54,11 @@ class IngestionNode:
             "message_id": payload.get("message_id")
         })
 
+        for feat in email_rep.behavioral_features:
+            state["evidence"].append({
+                "stage": "INGESTION_BEHAVIORAL",
+                "type": "BEHAVIORAL_FEATURE",
+                "detail": feat
+            })
+
         return state

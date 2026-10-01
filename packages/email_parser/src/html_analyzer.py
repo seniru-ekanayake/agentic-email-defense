@@ -1,6 +1,7 @@
 """
 Deterministic HTML Analyzer for email bodies.
-Extracts active content, rendering indicators, monikers, parser anomalies, and URLs without relying on an LLM.
+Extracts active content, rendering indicators, monikers, parser anomalies, and URLs
+using centralized URLNormalizer and UnicodeSecurityAnalyzer without relying on an LLM.
 """
 
 import re
@@ -13,6 +14,8 @@ from packages.schemas.python.models import (
     UrlFeature,
     ExploitIndicator
 )
+from packages.email_parser.src.url_normalizer import URLNormalizer, NormalizedUrl
+from packages.email_parser.src.unicode_analyzer import UnicodeSecurityAnalyzer
 
 
 class HtmlExtractor(HTMLParser):
@@ -81,13 +84,8 @@ class HtmlExtractor(HTMLParser):
 class HtmlAnalyzer:
     """Deterministic analyzer for email HTML bodies."""
 
-    MONIKER_PATTERNS = [
-        (r"search-ms:[^\s\"'>]+", "CVE-2023-35636 Outlook Moniker / Search-ms URI Abuse"),
-        (r"ms-appx:[^\s\"'>]+", "MS-APPX Protocol Execution Abuse"),
-        (r"file://\\\\[^\s\"'>]+", "CVE-2024-21413 Outlook MonikerLink UNC Bypass"),
-        (r"\\\\(?:[0-9]{1,3}\.){3}[0-9]{1,3}\\[^\s\"'>]+", "Forced SMB / UNC NTLM Hash Harvesting"),
-        (r"\\\\(?:[a-zA-Z0-9_\-\.]+)\\[^\s\"'>]+", "Forced UNC Path Callout")
-    ]
+    def __init__(self):
+        self.unicode_analyzer = UnicodeSecurityAnalyzer()
 
     def analyze(self, html_content: str) -> Tuple[HtmlFeatures, List[UrlFeature], List[ExploitIndicator], List[str]]:
         if not html_content:
@@ -110,20 +108,21 @@ class HtmlAnalyzer:
             suspicious_tags=list(set(parser.suspicious_tags))
         )
 
-        # URL extraction and mismatch analysis
         urls: List[UrlFeature] = []
+        exploit_indicators: List[ExploitIndicator] = []
+        rendering_features: List[str] = []
+
         rfc2606_domains = {".invalid", ".example", ".test", ".localhost", "example.com", "example.org", "example.net"}
 
+        # 1. Process HTML Links with URLNormalizer
         for href, text in parser.links:
-            parsed = urllib.parse.urlparse(href)
-            domain = parsed.netloc.lower()
-            
-            # Check IP-based
+            norm = URLNormalizer.normalize(href)
+            domain = norm.host
+
             is_ip = bool(re.match(r"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?::[0-9]+)?$", domain))
-            # Check punycode
             is_puny = "xn--" in domain
-            # Check RFC 2606 / RFC 6761 test domain
             is_test_domain = any(domain.endswith(td) for td in rfc2606_domains)
+
             # Check mismatch (e.g. text says paypal.com, href is evil.com)
             is_mismatched = False
             if text and ("http://" in text or "https://" in text or ".com" in text or ".org" in text):
@@ -131,12 +130,12 @@ class HtmlAnalyzer:
                 if domain and text_clean and domain != text_clean and not domain.endswith("." + text_clean):
                     is_mismatched = True
 
-            reputation = "inert_test_domain" if is_test_domain else ("suspicious" if (is_mismatched or is_ip or is_puny) else "unknown")
+            reputation = "inert_test_domain" if is_test_domain else ("suspicious" if (is_mismatched or is_ip or is_puny or norm.is_moniker_uri or norm.is_unc_path) else "unknown")
 
             urls.append(
                 UrlFeature(
-                    url=href,
-                    domain=domain or "local/scheme",
+                    url=norm.normalized_url,
+                    domain=domain or norm.scheme or "local/scheme",
                     display_text=text or None,
                     is_mismatched=is_mismatched,
                     is_ip_based=is_ip,
@@ -145,67 +144,91 @@ class HtmlAnalyzer:
                 )
             )
 
-        # Exploit indicators and rendering anomalies
-        exploit_indicators: List[ExploitIndicator] = []
-        rendering_features: List[str] = []
-
-        # Scan for Unicode Obfuscation, RTLO, Zero-Width Characters, and Homoglyphs
-        rtlo_chars = re.findall(r"[\u202E\u202D\u2066\u2067\u2068\u2069]", html_content)
-        if rtlo_chars:
-            exploit_indicators.append(
-                ExploitIndicator(
-                    indicator_type="UNICODE_RTLO_OBFUSCATION",
-                    evidence=f"Detected Right-to-Left Override (RTLO) Unicode control character(s): {[hex(ord(c)) for c in set(rtlo_chars)]}",
-                    target_software="Email Client / Visual Parser",
-                    target_cve=None,
-                    confidence=0.98
+            # Flag Moniker URIs, UNC Paths, and Data URIs as explicit evidence (without hardcoded CVEs)
+            if norm.is_moniker_uri:
+                rendering_features.append(f"Moniker URI handler observed: {norm.scheme}:...")
+                exploit_indicators.append(
+                    ExploitIndicator(
+                        indicator_type="MONIKER_URI_OBSERVED",
+                        evidence=f"Observed moniker protocol scheme '{norm.scheme}' in normalized link: {norm.normalized_url[:80]}",
+                        target_software="Windows Shell / Mail Client URI Handler",
+                        target_cve=None,  # CVE correlation performed dynamically via threat intel/KEV
+                        confidence=0.90
+                    )
                 )
-            )
-            rendering_features.append("Unicode RTLO character detected (visual spoofing attempt).")
+            elif norm.is_unc_path:
+                rendering_features.append(f"UNC / SMB remote path observed: {norm.normalized_url[:60]}")
+                exploit_indicators.append(
+                    ExploitIndicator(
+                        indicator_type="UNC_PATH_OBSERVED",
+                        evidence=f"Observed UNC remote share path: {norm.normalized_url[:80]}",
+                        target_software="Windows SMB Client",
+                        target_cve=None,
+                        confidence=0.90
+                    )
+                )
+            elif norm.is_data_uri:
+                rendering_features.append("Inline data: URI payload observed")
+                exploit_indicators.append(
+                    ExploitIndicator(
+                        indicator_type="DATA_URI_PAYLOAD_OBSERVED",
+                        evidence=f"Inline data: URI payload: {norm.normalized_url[:60]}...",
+                        target_software="Browser / Webmail Client",
+                        target_cve=None,
+                        confidence=0.85
+                    )
+                )
 
-        zero_width = re.findall(r"[\u200B\u200C\u200D\uFEFF\u2060\u00AD]", html_content)
-        if zero_width:
+        # 2. Plain text URL scanning with URLNormalizer
+        # Match http(s), file, search-ms, data, or percent-encoded versions
+        raw_matches = re.findall(r"(?:https?|file|search-ms|data|%66%69%6c%65|%73%65%61%72%63%68)://[^\s<>\"'()]+", html_content, re.IGNORECASE)
+        # Also check for unanchored search-ms: or file: schemes
+        raw_matches += re.findall(r"(?:search-ms|file|ms-appinstaller):[^\s<>\"'()]+", html_content, re.IGNORECASE)
+
+        existing_urls = {u.url for u in urls}
+        for rmatch in raw_matches:
+            norm = URLNormalizer.normalize(rmatch)
+            if norm.normalized_url not in existing_urls:
+                existing_urls.add(norm.normalized_url)
+                p_domain = norm.host
+                is_test = any(p_domain.endswith(td) for td in rfc2606_domains)
+                urls.append(
+                    UrlFeature(
+                        url=norm.normalized_url,
+                        domain=p_domain or norm.scheme or "bare/url",
+                        display_text=rmatch,
+                        is_mismatched=False,
+                        is_ip_based=bool(re.match(r"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?::[0-9]+)?$", p_domain)),
+                        is_punycode="xn--" in p_domain,
+                        reputation="inert_test_domain" if is_test else "unknown"
+                    )
+                )
+                if norm.is_moniker_uri or norm.is_unc_path:
+                    exploit_indicators.append(
+                        ExploitIndicator(
+                            indicator_type="MONIKER_URI_OBSERVED" if norm.is_moniker_uri else "UNC_PATH_OBSERVED",
+                            evidence=f"Observed protocol scheme '{norm.scheme}' in plain text: {norm.normalized_url[:80]}",
+                            target_software="Windows Shell / Mail Client Handler",
+                            target_cve=None,
+                            confidence=0.90
+                        )
+                    )
+
+        # 3. Unicode Anomaly Inspection (Body text)
+        u_report = self.unicode_analyzer.analyze_text(html_content, "BODY: text/html")
+        for finding in u_report:
             exploit_indicators.append(
                 ExploitIndicator(
-                    indicator_type="UNICODE_ZERO_WIDTH_OBFUSCATION",
-                    evidence=f"Detected {len(zero_width)} hidden zero-width / soft-hyphen character(s) used for NLP/filter evasion.",
-                    target_software="NLP / Signature Gateway",
+                    indicator_type=f"UNICODE_{finding.anomaly_type}",
+                    evidence=f"{finding.description} (Location: {finding.location})",
+                    target_software="Email Client / Visual Parser",
                     target_cve=None,
                     confidence=0.95
                 )
             )
-            rendering_features.append(f"Contains {len(zero_width)} zero-width/soft-hyphen characters for signature evasion.")
+            rendering_features.append(f"Unicode anomaly ({finding.anomaly_type}) at {finding.location}")
 
-        # Cyrillic / Greek homoglyphs mixed into ASCII text
-        mixed_homoglyphs = re.findall(r"[a-zA-Z0-9]+[\u0400-\u04FF\u0370-\u03FF]+[a-zA-Z0-9]*|[\u0400-\u04FF\u0370-\u03FF]+[a-zA-Z0-9]+", html_content)
-        if mixed_homoglyphs:
-            exploit_indicators.append(
-                ExploitIndicator(
-                    indicator_type="HOMOGLYPH_DECEPTIVE_TYPOGRAPHY",
-                    evidence=f"Detected mixed-script Cyrillic/Greek homoglyph spoofing tokens: {mixed_homoglyphs[:5]}",
-                    target_software="Visual Display / User Trust",
-                    target_cve=None,
-                    confidence=0.92
-                )
-            )
-            rendering_features.append(f"Detected {len(mixed_homoglyphs)} mixed-script homoglyph tokens.")
-
-        # Scan for Monikers / UNC / Rendering exploits in raw HTML
-        for pattern, desc in self.MONIKER_PATTERNS:
-            matches = re.findall(pattern, html_content, re.IGNORECASE)
-            for m in matches:
-                rendering_features.append(f"Found URI handler: {m[:60]}")
-                target_cve = "CVE-2023-35636" if "search-ms" in m else ("CVE-2024-21413" if "file:" in m else "T1187")
-                exploit_indicators.append(
-                    ExploitIndicator(
-                        indicator_type="RENDERING_EXPLOIT_URI",
-                        evidence=f"{desc} (Matched URI: {m})",
-                        target_software="Microsoft Outlook / Webmail",
-                        target_cve=target_cve,
-                        confidence=0.95
-                    )
-                )
-
+        # 4. Script & Form active content checks
         if parser.has_scripts:
             exploit_indicators.append(
                 ExploitIndicator(
@@ -221,4 +244,3 @@ class HtmlAnalyzer:
             rendering_features.append("HTML contains interactive credential harvesting form.")
 
         return html_features, urls, exploit_indicators, rendering_features
-

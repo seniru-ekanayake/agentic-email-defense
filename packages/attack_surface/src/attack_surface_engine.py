@@ -121,15 +121,16 @@ class EmailAttackSurfaceEngine:
         Correlates an incoming suspicious email with the exposed asset attack surface.
         Updates state to ATTACK_OBSERVED and generates multi-dimensional scores.
         """
-        # If email contains exploit indicators targeting the asset's CVE
-        matching_cves = [ind.target_cve for ind in email_rep.exploit_indicators if ind.target_cve in asset.associated_cves]
-        
+        # If email contains exploit indicators (e.g. moniker URIs or target CVEs)
+        matching_cves = [ind.target_cve for ind in email_rep.exploit_indicators if ind.target_cve and ind.target_cve in asset.associated_cves]
+        has_rendering_exploit = any(ind.indicator_type in ("RENDERING_EXPLOIT_URI", "MONIKER_URI_OBSERVED") for ind in email_rep.exploit_indicators)
+
         assessment: Optional[EmailExploitabilityAssessment] = None
-        if matching_cves:
+        if matching_cves or (has_rendering_exploit and asset.associated_cves):
             if AssetState.ATTACK_OBSERVED not in asset.states:
                 asset.states.append(AssetState.ATTACK_OBSERVED)
             
-            cve_id = matching_cves[0]
+            cve_id = matching_cves[0] if matching_cves else asset.associated_cves[0]
             cve_rec = self.nvd_ingestor.fetch_cve(cve_id, live=False)
             kev_rec = self.kev_map.get(cve_id)
             if cve_rec:

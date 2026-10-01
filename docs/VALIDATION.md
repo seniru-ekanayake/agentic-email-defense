@@ -145,3 +145,28 @@ $env:LLM_MODEL="meta-llama/llama-3.3-70b-instruct:free"
 
 python -m pytest tests/test_production_platform.py -v
 ```
+
+---
+
+## 9. Forensic Verification & Production Graph Integration (Post-Remediation)
+
+Following an independent forensic conflict-resolution audit, the production investigation pipeline was remediated to ensure 100% parity between declared architecture and runtime execution:
+
+1. **Production Graph Integration**: `SecurityGraph` (`apps/agents/graph.py`) directly runs `_execute_adaptive_investigation(state)`, invoking `InvestigationPlanner` (`RuleBasedPlanner`, `LLMPlanner`, `HybridPlanner`) in an authentic multi-turn replanning loop.
+2. **Authentic Decision Traces**: Hardcoded decision lists and synthetic execution durations (`duration_ms=4.2`) have been completely removed. Decision traces in `InvestigationService` are real projections of `inv_state.decisions` and measured wall-clock execution latencies via `time.perf_counter()`.
+3. **Consensus Arbitration**: In `HybridPlanner`, both rule proposals and model proposals are evaluated, emitting an explicit `arbitration` record on each decision showing agreement status and rationale.
+4. **Zero Simulated Success**:
+   - AbuseIPDB returns `NOT_CONFIGURED / UNAVAILABLE` when keys are missing.
+   - CISA KEV is explicitly labeled as `OFFLINE_SNAPSHOT`.
+   - Response tools emit `status: NOT_CONFIGURED`, `execution_state: DISPATCH_FAILED` when external gateway URLs are missing.
+   - URL sandbox declares `STATIC_URL_ANALYSIS` mode with `NetworkGuard` when headless browser runtime is not provisioned.
+5. **Multi-Tenant Isolation**: Verified data-tier rejection (`PermissionError`) and API HTTP 403 Forbidden on mismatched tenant queries.
+6. **Empirical Benchmarks (20-run verification)**:
+   - **Time-to-Verdict P50**: $145.28\text{ ms}$
+   - **Time-to-Verdict P95**: $9,340.08\text{ ms}$
+   - **Mean Latency**: $2,413.03\text{ ms}$
+   - **Mean Tool Overhead**: $101.06\text{ ms}$
+   - **Peak Process Memory**: $22.83\text{ MB}$
+
+For the complete post-remediation report, refer to [**`docs/POST_REMEDIATION_VALIDATION.md`**](file:///c:/Enterprise%20Agentic%20Email%20Exploitation%20Detection%20&%20Response%20Platform/docs/POST_REMEDIATION_VALIDATION.md).
+

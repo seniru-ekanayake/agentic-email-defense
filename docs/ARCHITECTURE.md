@@ -46,10 +46,10 @@ flowchart TD
         QUEST_STORE["Investigation Questions & Hypotheses"]
     end
 
-    subgraph PLANNERS["4. Dual Investigation Planners"]
+    subgraph PLANNERS["4. Dynamic Investigation Planners (Integrated into SecurityGraph)"]
         RB_PLANNER["RuleBasedPlanner (Deterministic / Production Verified)"]
         LLM_PLANNER["LLMPlanner (Adaptive / Runtime Verified)"]
-        HYBRID_PLANNER["HybridPlanner (Consensus & Verification)"]
+        HYBRID_PLANNER["HybridPlanner (Consensus Arbitration & Verified Fallback)"]
     end
 
     subgraph GATING["5. Policy & Safety Gating"]
@@ -59,13 +59,14 @@ flowchart TD
     end
 
     subgraph TOOLS["6. Investigative & Remediation Tools"]
-        DNS_TOOL["DNS & MX Lookup Tool"]
-        WHOIS_TOOL["WHOIS & Domain Age Tool"]
-        AUTH_TOOL["SPF / DKIM / DMARC Analyzer"]
-        SANDBOX_TOOL["Playwright Headless DOM Sandbox"]
-        TI_TOOL["Threat Intel & KEV Correlator"]
-        QUAR_TOOL["Email Quarantine Action"]
-        BLOCK_TOOL["Firewall / Inbound IP Block Action"]
+        DNS_TOOL["DNS & SPF/DMARC Recon Tool"]
+        UNICODE_TOOL["Unicode Security Analyzer"]
+        AUTH_TOOL["Authentication Header Analyzer"]
+        SANDBOX_TOOL["URL Sandbox (Static / Live Fetch Fallback)"]
+        ATTACH_TOOL["Attachment Static Forensic Inspector"]
+        TI_TOOL["Threat Intel Feeds & CISA KEV Snapshot"]
+        QUAR_TOOL["Email Quarantine Action (Gated)"]
+        BLOCK_TOOL["Firewall / Inbound IP Block Action (Gated)"]
     end
 
     subgraph PERSISTENCE["7. Persistence & Audit Layer"]

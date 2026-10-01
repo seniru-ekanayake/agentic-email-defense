@@ -94,10 +94,10 @@ class CisaKevIngestor:
             except Exception as e:
                 logger.warning(f"Live CISA KEV fetch failed: {e}. Falling back to bundled offline catalog.")
                 raw_items = BUNDLED_KEV_SNAPSHOT
-                source_url = "bundled://cisa_kev_snapshot.json"
+                source_url = "bundled://cisa_kev_offline_snapshot_2024-02-13.json"
         else:
             raw_items = BUNDLED_KEV_SNAPSHOT
-            source_url = "bundled://cisa_kev_snapshot.json"
+            source_url = "bundled://cisa_kev_offline_snapshot_2024-02-13.json"
 
         records: List[KevRecord] = []
         for item in raw_items:

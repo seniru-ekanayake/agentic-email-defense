@@ -1,6 +1,7 @@
 """
 Deterministic MIME Parser: Converts raw RFC822 EML bytes/text into EmailAttackRepresentation.
 Hardened against malformed MIME structures, deep recursion, and attachment bombs.
+Uses central UnicodeSecurityAnalyzer across all headers, bodies, and attachment filenames.
 """
 
 import email
@@ -20,9 +21,11 @@ from packages.schemas.python.models import (
     AttachmentFeature,
     IdentityTarget,
     RiskEvidence,
+    ExploitIndicator,
     DataClassification
 )
 from packages.email_parser.src.html_analyzer import HtmlAnalyzer
+from packages.email_parser.src.unicode_analyzer import UnicodeSecurityAnalyzer
 from apps.agents.core.data_classification import DataClassificationEngine
 
 MAX_RECURSION_DEPTH = 10
@@ -32,6 +35,7 @@ MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024  # 25 MB safety limit
 class MimeParser:
     def __init__(self):
         self.html_analyzer = HtmlAnalyzer()
+        self.unicode_analyzer = UnicodeSecurityAnalyzer()
         self.classification_engine = DataClassificationEngine()
 
     def parse_eml(
@@ -80,11 +84,37 @@ class MimeParser:
         # 4. Extract Body & Attachments (with recursion guard)
         text_plain, text_html, attachments, mime_structure, malformed_indicators = self._extract_parts(msg)
 
-        # 5. Analyze body for active content, unicode obfuscation & rendering exploits
-        body_to_analyze = text_html if text_html else text_plain
-        html_features, urls, exploit_indicators, rendering_features = self.html_analyzer.analyze(body_to_analyze)
+        # 5. Comprehensive Unicode Analysis Across Headers, Bodies, Attachments
+        att_dicts = [{"filename": a.filename} for a in attachments]
+        u_report = self.unicode_analyzer.analyze_email_components(
+            headers=headers,
+            body_plain=text_plain,
+            body_html=text_html,
+            attachments=att_dicts
+        )
 
-        # If plain text has distinct content, scan plain text for unicode obfuscation as well
+        exploit_indicators: List[ExploitIndicator] = []
+        rendering_features: List[str] = []
+
+        for finding in u_report.findings:
+            exploit_indicators.append(
+                ExploitIndicator(
+                    indicator_type=f"UNICODE_{finding.anomaly_type}",
+                    evidence=f"{finding.description} (Location: {finding.location})",
+                    target_software="Email Client / Visual Display Parser",
+                    target_cve=None,
+                    confidence=0.95
+                )
+            )
+            rendering_features.append(f"Unicode anomaly ({finding.anomaly_type}) at {finding.location}")
+
+        # 6. Analyze body for active content & rendering exploits
+        body_to_analyze = text_html if text_html else text_plain
+        html_features, urls, html_exploits, html_rend = self.html_analyzer.analyze(body_to_analyze)
+        exploit_indicators.extend([e for e in html_exploits if e not in exploit_indicators])
+        rendering_features.extend([r for r in html_rend if r not in rendering_features])
+
+        # If plain text has distinct content, scan plain text for URLs/exploits as well
         if text_plain and text_html:
             _, plain_urls, plain_exploits, plain_rend = self.html_analyzer.analyze(text_plain)
             exploit_indicators.extend([e for e in plain_exploits if e not in exploit_indicators])
@@ -99,10 +129,9 @@ class MimeParser:
             html_features=html_features
         )
 
-        # 6. Behavioral Features & Risk Evidence
+        # 7. Behavioral Features & Risk Evidence
         behavioral_features: List[str] = []
         risk_evidence: List[RiskEvidence] = []
-
 
         if auth_res.spf == "fail" or auth_res.dmarc == "fail":
             behavioral_features.append("Sender authentication failed (SPF/DMARC failure)")
@@ -137,7 +166,7 @@ class MimeParser:
                     reasoning=f"Displayed anchor text differs from destination domain '{url.domain}'."
                 ))
 
-        # 7. Identify Identity Targets
+        # 8. Identify Identity Targets
         identity_targets: List[IdentityTarget] = []
         vip_keywords = ["exec", "ceo", "cfo", "cto", "coo", "ciso", "finance", "president", "director", "chief"]
         for r in recipients:
@@ -150,7 +179,7 @@ class MimeParser:
                 )
             )
 
-        # 8. Data Privacy Classification
+        # 9. Data Privacy Classification
         temp_dict = {"headers": headers, "body": {"text_plain": text_plain, "text_html": text_html}}
         classification = self.classification_engine.classify_payload(temp_dict, explicit_classification)
 

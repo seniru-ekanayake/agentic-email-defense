@@ -1,0 +1,16 @@
+{
+  "iterations": 20,
+  "time_to_verdict_ms": {
+    "p50": 145.28,
+    "p95": 9340.08,
+    "mean": 2413.03
+  },
+  "tool_execution_overhead_ms": {
+    "mean_per_tool": 101.06,
+    "total_tools_measured": 34
+  },
+  "memory_usage_mb": {
+    "peak_mb": 22.83,
+    "current_mb": 21.68
+  }
+}

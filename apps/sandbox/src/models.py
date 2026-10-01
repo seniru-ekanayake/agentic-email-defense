@@ -56,6 +56,11 @@ class SandboxTelemetry(BaseModel):
     forced_callout_destinations: List[str] = Field(default_factory=list)
     is_benign: bool = True
     summary: str = "No anomalous behavior observed during rendering."
+    sandbox_scope: str = "BROWSER_DOM_SANDBOX"
+    pe_binary_detonation: str = "NOT_AVAILABLE"
+    browser_runtime_status: str = "BROWSER_RUNTIME_UNAVAILABLE"
+    execution_mode: str = "STATIC_INSPECTION"
+    engine_name: str = "Static Regex / DOM Mutation Heuristics (Playwright Unavailable)"
 
 
 class UrlPageFeatures(BaseModel):
@@ -84,3 +89,16 @@ class UrlSandboxReport(BaseModel):
     risk_score: float = Field(ge=0.0, le=100.0)
     evidence: List[str] = Field(default_factory=list)
     scanned_at: str = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
+    sandbox_scope: str = "BROWSER_DOM_SANDBOX"
+    sandbox_capability: str = "BROWSER_DOM_ONLY"
+    capabilities: Dict[str, bool] = Field(default_factory=lambda: {
+        "browser_js": False,
+        "browser_dom": True,
+        "network": True,
+        "redirect_chain": True,
+        "screenshot": False,
+        "download": False
+    })
+    pe_binary_detonation: str = "NOT_AVAILABLE"
+    browser_runtime_status: str = "BROWSER_RUNTIME_UNAVAILABLE"
+    execution_mode: str = "STATIC_URL_ANALYSIS"

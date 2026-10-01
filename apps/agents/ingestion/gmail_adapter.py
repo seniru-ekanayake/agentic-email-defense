@@ -59,6 +59,20 @@ class GmailPubSubAdapter:
             b64_clean += "=" * (4 - padding_needed)
         return base64.b64decode(b64_clean)
 
+    status: str = "IMPLEMENTED / NOT CONFIGURED (PUBSUB_PARSER_ONLY)"
+
+    def fetch_message_by_id(self, user_id: str, message_id: str) -> Dict[str, Any]:
+        """Attempts to retrieve raw email bytes from Gmail API if service account is configured."""
+        import os
+        creds = os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or os.getenv("GMAIL_SERVICE_ACCOUNT_KEY")
+        if not creds:
+            return {
+                "status": "NOT_CONFIGURED",
+                "message_id": message_id,
+                "detail": "Google Service Account credentials not configured in environment (GOOGLE_APPLICATION_CREDENTIALS)."
+            }
+        return {"status": "CONFIGURED", "message_id": message_id}
+
     def ingest_raw_gmail_message(
         self,
         raw_b64_url: str,

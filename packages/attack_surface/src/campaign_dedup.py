@@ -1,8 +1,7 @@
-"""Real-Time Campaign Incident Deduplication & Rollup Engine.
-
-Collapses high-volume, concurrent email attack waves (e.g. 1,000 Moniker exploit
-or BEC lures) into a single cohesive Campaign Incident entity with aggregate metrics,
-completely eliminating SOC alert fatigue.
+"""
+Real-Time Campaign Incident Deduplication & Rollup Engine.
+Collapses high-volume, concurrent email attack waves into a single cohesive Campaign Incident entity.
+Persists campaign clusters durably to SQLite via DurableStorage to support multi-worker deployments.
 """
 
 from __future__ import annotations
@@ -10,10 +9,14 @@ from __future__ import annotations
 import hashlib
 import re
 import time
+import logging
 from typing import Dict, List, Optional, Set, Tuple
 from pydantic import BaseModel, Field
 
 from packages.schemas.python.models import EmailAttackRepresentation
+from apps.agents.core.durable_storage import DurableStorage
+
+logger = logging.getLogger("CampaignAggregator")
 
 
 class CampaignCluster(BaseModel):
@@ -88,14 +91,13 @@ class CampaignFingerprinter:
 
 
 class CampaignAggregator:
-    """Stateful aggregator that maintains active campaign clusters and rolls up incidents."""
+    """Stateful aggregator that maintains active campaign clusters in SQLite storage."""
 
     _instance: Optional[CampaignAggregator] = None
 
-    def __init__(self, time_window_seconds: float = 86400.0):
+    def __init__(self, time_window_seconds: float = 86400.0, storage: Optional[DurableStorage] = None):
         self.time_window = time_window_seconds
-        self.campaigns: Dict[str, CampaignCluster] = {}  # fingerprint -> CampaignCluster
-        self._id_to_fp: Dict[str, str] = {}              # campaign_id -> fingerprint
+        self.storage = storage or DurableStorage.get_instance()
 
     @classmethod
     def get_instance(cls) -> CampaignAggregator:
@@ -124,9 +126,10 @@ class CampaignAggregator:
                 cve = ind.target_cve.upper()
                 break
 
-        # Check if active campaign cluster exists within the time window
-        if fp in self.campaigns:
-            camp = self.campaigns[fp]
+        # Check durable SQLite storage for active cluster
+        existing_data = self.storage.get_campaign_cluster(fp)
+        if existing_data:
+            camp = CampaignCluster(**existing_data)
             if (now - camp.last_seen) <= self.time_window:
                 # Update existing campaign
                 camp.last_seen = now
@@ -145,6 +148,7 @@ class CampaignAggregator:
                 if ear.message_id not in camp.sample_message_ids and len(camp.sample_message_ids) < 10:
                     camp.sample_message_ids.append(ear.message_id)
 
+                self.storage.save_campaign_cluster(camp.model_dump())
                 return camp, False
 
         # Create new campaign
@@ -165,17 +169,20 @@ class CampaignAggregator:
             is_active=True
         )
 
-        self.campaigns[fp] = new_camp
-        self._id_to_fp[camp_id] = fp
+        self.storage.save_campaign_cluster(new_camp.model_dump())
         return new_camp, True
 
     def get_campaign_by_id(self, campaign_id: str) -> Optional[CampaignCluster]:
-        fp = self._id_to_fp.get(campaign_id)
-        return self.campaigns.get(fp) if fp else None
+        clusters = self.storage.list_campaign_clusters()
+        for c in clusters:
+            if c.get("campaign_id") == campaign_id:
+                return CampaignCluster(**c)
+        return None
 
     def list_active_campaigns(self) -> List[CampaignCluster]:
-        return [c for c in self.campaigns.values() if c.is_active]
+        clusters = self.storage.list_campaign_clusters()
+        return [CampaignCluster(**c) for c in clusters if c.get("is_active", True)]
 
     def clear(self) -> None:
-        self.campaigns.clear()
-        self._id_to_fp.clear()
+        """Clear clusters for test isolation."""
+        self.storage.clear_campaign_clusters()

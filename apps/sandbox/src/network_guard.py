@@ -1,12 +1,14 @@
 """
 NetworkGuard: Enforces strict outbound network boundary inside the Sandbox.
-Blocks RFC1918 private subnets, localhost, and cloud metadata endpoints to prevent SSRF and internal scanning.
+Uses URLNormalizer to decode obfuscated URIs, explicitly blocking RFC1918 private subnets,
+localhost, cloud metadata endpoints, local file: URIs, data: URIs, and script URIs.
 """
 
 import re
 import urllib.parse
 import ipaddress
 from typing import Tuple, Optional
+from packages.email_parser.src.url_normalizer import URLNormalizer, NormalizedUrl
 
 
 class NetworkGuard:
@@ -21,28 +23,42 @@ class NetworkGuard:
         "100.100.100.200"  # Alibaba cloud metadata
     ]
 
+    NON_NETWORK_SCHEMES = {"file", "data", "javascript", "vbscript", "about", "search-ms", "ms-appinstaller"}
+
     def evaluate_destination(self, url_or_target: str) -> Tuple[bool, Optional[str], bool]:
         """
-        Evaluates a URL or IP/UNC target.
+        Evaluates a URL, IP, UNC, or non-network URI target.
         Returns: (is_allowed, block_reason, is_ssrf_attempt)
         """
         if not url_or_target:
-            return False, "Empty destination", False
+            return False, "Blocked: Empty destination URI", False
 
-        # Check UNC / SMB paths
-        if url_or_target.startswith("\\\\") or url_or_target.startswith("//"):
-            clean_host = url_or_target.lstrip("\\/").split("\\")[0].split("/")[0]
-            return self._evaluate_host(clean_host)
+        # Normalize URL/URI using URLNormalizer
+        norm = URLNormalizer.normalize(url_or_target)
 
-        # Parse standard URL
-        try:
-            parsed = urllib.parse.urlparse(url_or_target)
-            host = parsed.hostname or url_or_target.split("/")[0]
-            if ":" in host:
-                host = host.split(":")[0]
-            return self._evaluate_host(host)
-        except Exception:
-            return False, "Malformed destination URL", False
+        # 1. Non-Network Schemes (file:, data:, javascript:, vbscript:, about:)
+        if norm.scheme in self.NON_NETWORK_SCHEMES or norm.is_local_file_url or norm.is_data_uri or norm.is_script_uri:
+            if norm.is_local_file_url or norm.scheme == "file":
+                if norm.is_unc_path:
+                    # UNC paths may trigger outbound SMB/NTLM relay
+                    return self._evaluate_host(norm.host)
+                return False, f"Blocked: Local File System Access URI ({norm.normalized_url[:60]})", False
+            elif norm.is_data_uri:
+                return False, "Blocked: Inline Data URI Execution Payload", False
+            elif norm.is_script_uri:
+                return False, f"Blocked: Script URI Execution ({norm.scheme}:)", False
+            elif norm.is_moniker_uri:
+                if norm.is_unc_path:
+                    return self._evaluate_host(norm.host)
+                return False, f"Blocked: Moniker URI Execution ({norm.scheme}:)", False
+
+        # 2. Network Schemes: Host evaluation
+        host = norm.host
+        if not host:
+            # Never treat an empty hostname as safe!
+            return False, f"Blocked: Missing or invalid network hostname ({norm.normalized_url[:40]})", False
+
+        return self._evaluate_host(host)
 
     def _evaluate_host(self, host: str) -> Tuple[bool, Optional[str], bool]:
         host_low = host.lower().strip("[]")

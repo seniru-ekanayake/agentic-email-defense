@@ -1,0 +1,127 @@
+"""
+InvestigationState: First-Class Evidence & Hypothesis Data Models for Adaptive Planning.
+Maintains persistent Artifacts, Observations, Evidence, Hypotheses, Unresolved Questions,
+ToolExecutions, PlannerDecisions, Contradictions, and Final Verdicts.
+"""
+
+from __future__ import annotations
+
+import uuid
+import time
+import datetime
+from typing import Dict, Any, List, Optional
+from pydantic import BaseModel, Field
+
+
+class Artifact(BaseModel):
+    id: str = Field(default_factory=lambda: f"art-{uuid.uuid4().hex[:8]}")
+    artifact_type: str  # EML_RAW, MIME_HEADER, BODY_HTML, BODY_PLAIN, ATTACHMENT_PAYLOAD, URL_STRING
+    raw_data: Any
+    location: str  # e.g., "HEADER: Subject", "BODY: text/html", "ATTACHMENT: invoice.zip"
+    timestamp: str = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
+
+
+class Evidence(BaseModel):
+    id: str  # E-101, E-102
+    evidence_type: str  # MIME_HEADER, AUTHENTICATION, UNICODE_ANOMALY, MONIKER_URI, LOCAL_FILE_URI, UNC_PATH, URL_REPUTATION, ATTACHMENT_PE, ATTACHMENT_MACRO, CISA_KEV_MATCH
+    value: str
+    source: str
+    confidence: float = 0.95
+    status: str = "OBSERVED"  # OBSERVED, INFERRED, UNKNOWN, CONTRADICTED
+    location: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    timestamp: str = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
+
+
+class Hypothesis(BaseModel):
+    id: str  # H-001, H-002, etc.
+    statement: str
+    category: str  # CREDENTIAL_PHISHING, MALICIOUS_REDIRECT, ATTACHMENT_EXECUTION, IMPERSONATION, EXPLOIT_ATTEMPT, BENIGN_COMMUNICATION
+    status: str = "HYPOTHESIS"  # HYPOTHESIS, SUPPORTED, WEAKENED, CONTRADICTED, CLOSED
+    confidence: float = 0.5
+    supporting_evidence_ids: List[str] = Field(default_factory=list)
+    contradicting_evidence_ids: List[str] = Field(default_factory=list)
+    unresolved_question_ids: List[str] = Field(default_factory=list)
+
+
+class Question(BaseModel):
+    id: str  # Q-001, Q-002
+    text: str
+    priority: float = 1.0  # Higher priority questions are addressed first
+    category: str
+    related_hypothesis_id: Optional[str] = None
+    status: str = "UNRESOLVED"  # UNRESOLVED, RESOLVED, ABANDONED
+    resolution_evidence_id: Optional[str] = None
+
+
+class ToolExecution(BaseModel):
+    id: str = Field(default_factory=lambda: f"exec-{uuid.uuid4().hex[:8]}")
+    tool_name: str
+    status: str = "COMPLETED"  # COMPLETED, FAILED, TIMEOUT, SKIPPED
+    duration_ms: float = 0.0
+    input_params: Dict[str, Any] = Field(default_factory=dict)
+    output_summary: str = ""
+    error: Optional[str] = None
+    produced_evidence_ids: List[str] = Field(default_factory=list)
+    timestamp: str = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
+
+
+class PlannerDecision(BaseModel):
+    decision_id: str = Field(default_factory=lambda: f"D-{uuid.uuid4().hex[:6].upper()}")
+    action: str  # RUN_TOOL, ASK_HUMAN, STOP
+    engine_type: str = "RULE_ENGINE"  # RULE_ENGINE, LLM_PLANNER, HYBRID
+    tool_name: Optional[str] = None
+    rationale: str
+    addresses_questions: List[str] = Field(default_factory=list)
+    expected_information_gain: float = 0.0
+    estimated_cost: float = 0.0
+    confidence_before: float = 0.5
+    confidence_after: float = 0.5
+    stop_reason: Optional[str] = None  # SUFFICIENT_EVIDENCE, NO_USEFUL_TOOLS, BUDGET_EXHAUSTED, DEPENDENCY_UNAVAILABLE, HUMAN_APPROVAL_REQUIRED, CONTRADICTORY_EVIDENCE, INSUFFICIENT_CONFIDENCE
+    arbitration: Optional[Dict[str, Any]] = None  # Documents Rule vs LLM proposals and consensus reasoning in Hybrid mode
+    timestamp: str = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
+
+
+class Contradiction(BaseModel):
+    id: str = Field(default_factory=lambda: f"contra-{uuid.uuid4().hex[:6]}")
+    description: str
+    conflicting_evidence_ids: List[str] = Field(default_factory=list)
+    resolution: str = "UNRESOLVED"
+    impact: str = "MEDIUM"
+
+
+class Verdict(BaseModel):
+    final_verdict: str = "BENIGN"  # BENIGN, SUSPICIOUS, MALICIOUS, CRITICAL
+    overall_risk_score: float = 0.0
+    confidence: float = 0.5
+    title: str = "Investigation Completed"
+    summary: str = ""
+    target_cve: Optional[str] = None  # UNKNOWN unless verified via CISA KEV/NVD correlation
+    primary_threat_category: str = "Standard Triage"
+
+
+class InvestigationState(BaseModel):
+    incident_id: str
+    tenant_id: str
+    autonomy_level: int = 1
+    raw_eml: bytes = b""
+    
+    # Dynamic Planning State
+    artifacts: List[Artifact] = Field(default_factory=list)
+    evidence: Dict[str, Evidence] = Field(default_factory=dict)
+    hypotheses: Dict[str, Hypothesis] = Field(default_factory=dict)
+    questions: Dict[str, Question] = Field(default_factory=dict)
+    executed_tools: List[ToolExecution] = Field(default_factory=list)
+    decisions: List[PlannerDecision] = Field(default_factory=list)
+    contradictions: List[Contradiction] = Field(default_factory=list)
+    
+    # Budget & Limits
+    remaining_budget_steps: int = 15
+    start_time: float = Field(default_factory=time.time)
+    max_duration_seconds: float = 30.0
+    
+    # Engine Observability
+    planner_engine: str = "RULE_ENGINE"
+    is_complete: bool = False
+    stop_reason: Optional[str] = None
+    verdict: Optional[Verdict] = None

@@ -5,6 +5,7 @@ Prevents vendor lock-in and handles dynamic model rotations without hardcoded hi
 
 import os
 import json
+import time
 import logging
 import urllib.request
 import urllib.error
@@ -30,6 +31,9 @@ class LLMResponse(BaseModel):
     tool_calls: Optional[List[Dict[str, Any]]] = None
     structured_json: Optional[Dict[str, Any]] = None
     model_used: str
+    status: str = "COMPLETED"  # COMPLETED, NOT_CONFIGURED, UNAVAILABLE, FAILED
+    actual_call: bool = True
+    engine_type: str = "LLM"    # LLM, RULE_ENGINE, HYBRID, NOT_CONFIGURED
     tokens_prompt: int = 0
     tokens_completion: int = 0
     latency_ms: float = 0.0
@@ -67,7 +71,7 @@ class OpenRouterProvider(LLMProvider):
         If no API key or offline, returns default safe profile.
         """
         if not self.api_key:
-            logger.warning("No OPENROUTER_API_KEY set; running in offline simulation mode.")
+            logger.warning("No OPENROUTER_API_KEY set; LLM provider is in offline/unconfigured mode.")
             return ModelCapabilities(
                 model_id=model_id,
                 supports_tool_calling=True,
@@ -130,11 +134,23 @@ class OpenRouterProvider(LLMProvider):
         temperature: float = 0.1
     ) -> LLMResponse:
         target_model = model_id or self.default_model
+        api_key = self.api_key or os.getenv("OPENROUTER_API_KEY", "")
         
-        # If no API key or in test mode, return deterministic structured mock response
-        if not self.api_key or self.api_key == "mock" or os.getenv("MOCK_LLM", "false").lower() == "true":
-            logger.info(f"[MOCK LLM] Simulating call for model {target_model}")
-            return self._mock_response(target_model, tools, response_schema)
+        # If no API key is provided, explicitly report NOT_CONFIGURED — never fabricate an LLM response!
+        if not api_key or api_key == "mock":
+            logger.info(f"[LLM GATEWAY] OpenRouter API key not configured for model {target_model}. Returning NOT_CONFIGURED status.")
+            return LLMResponse(
+                content="",
+                tool_calls=None,
+                structured_json=None,
+                model_used=target_model,
+                status="NOT_CONFIGURED",
+                actual_call=False,
+                engine_type="NOT_CONFIGURED",
+                tokens_prompt=0,
+                tokens_completion=0,
+                latency_ms=0.0
+            )
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -154,12 +170,13 @@ class OpenRouterProvider(LLMProvider):
                 "type": "json_object"
             }
 
+        t0 = time.time()
         try:
             req = urllib.request.Request(
                 f"{self.base_url}/chat/completions",
                 data=json.dumps(payload).encode("utf-8"),
                 headers={
-                    "Authorization": f"Bearer {self.api_key}",
+                    "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                     "HTTP-Referer": "https://github.com/agentic-email-sec",
                     "X-Title": "Agentic Email Security Platform"
@@ -167,6 +184,8 @@ class OpenRouterProvider(LLMProvider):
                 method="POST"
             )
             with urllib.request.urlopen(req, timeout=60) as resp:
+                t1 = time.time()
+                latency_ms = round((t1 - t0) * 1000.0, 2)
                 res_data = json.loads(resp.read().decode())
                 choice = res_data["choices"][0]["message"]
                 usage = res_data.get("usage", {})
@@ -195,11 +214,17 @@ class OpenRouterProvider(LLMProvider):
                     tool_calls=tool_calls,
                     structured_json=structured_json,
                     model_used=target_model,
+                    status="COMPLETED",
+                    actual_call=True,
+                    engine_type="LLM",
                     tokens_prompt=usage.get("prompt_tokens", 0),
-                    tokens_completion=usage.get("completion_tokens", 0)
+                    tokens_completion=usage.get("completion_tokens", 0),
+                    latency_ms=latency_ms
                 )
 
         except urllib.error.HTTPError as e:
+            t1 = time.time()
+            latency_ms = round((t1 - t0) * 1000.0, 2)
             err_body = e.read().decode()
             logger.error(f"OpenRouter HTTP {e.code} error: {err_body}")
             # Fallback if primary model failed and not already using openrouter/free
@@ -213,35 +238,26 @@ class OpenRouterProvider(LLMProvider):
                     response_schema=response_schema,
                     temperature=temperature
                 )
-            raise RuntimeError(f"OpenRouter API call failed: {err_body}") from e
+            return LLMResponse(
+                content="",
+                model_used=target_model,
+                status="FAILED",
+                actual_call=True,
+                engine_type="LLM",
+                latency_ms=latency_ms
+            )
         except Exception as e:
+            t1 = time.time()
+            latency_ms = round((t1 - t0) * 1000.0, 2)
             logger.error(f"Unexpected error in OpenRouterProvider: {e}")
-            raise
-
-    def _mock_response(self, model: str, tools: Optional[List[Dict[str, Any]]], response_schema: Optional[Dict[str, Any]]) -> LLMResponse:
-        """Safe deterministic mock for tests and offline environments."""
-        sample_assessment = {
-            "cve": "CVE-2023-35636",
-            "affected_product": "Microsoft Outlook",
-            "affected_component": "Rendering Engine / Moniker Parser",
-            "attack_vector": "Email / Rendering",
-            "email_delivery_possible": True,
-            "rendering_required": True,
-            "interaction_required": "VIEW",
-            "authentication_required": False,
-            "session_impact": "NTLM Hash Exposure / Session Hijacking",
-            "likely_post_exploitation": ["Credential relay", "Mailbox read"],
-            "evidence": ["Embedded search-ms moniker in HTML body", "Automated SMB callout triggered on preview"],
-            "confidence": 0.94
-        }
-        return LLMResponse(
-            content=json.dumps(sample_assessment),
-            structured_json=sample_assessment,
-            model_used=f"{model} (mock)",
-            tokens_prompt=120,
-            tokens_completion=85,
-            latency_ms=15.0
-        )
+            return LLMResponse(
+                content="",
+                model_used=target_model,
+                status="FAILED",
+                actual_call=False,
+                engine_type="LLM",
+                latency_ms=latency_ms
+            )
 
 
 class LocalOllamaProvider(LLMProvider):
@@ -269,17 +285,31 @@ class LocalOllamaProvider(LLMProvider):
         temperature: float = 0.1
     ) -> LLMResponse:
         logger.info(f"[LocalOllamaProvider] Routing sensitive request to local model {self.model}")
-        # Deterministic simulation or local call
-        mock_resp = {
-            "summary": "Local analysis complete. Privacy boundary strictly maintained.",
-            "safe": True
-        }
+        try:
+            req = urllib.request.Request(f"{self.base_url}/api/tags", method="GET")
+            with urllib.request.urlopen(req, timeout=1.5) as resp:
+                if resp.status == 200:
+                    pass
+        except Exception:
+            logger.warning(f"[LocalOllamaProvider] Local Ollama service unreachable at {self.base_url}")
+            return LLMResponse(
+                content="",
+                tool_calls=None,
+                structured_json=None,
+                model_used=f"ollama/{self.model}",
+                status="UNAVAILABLE",
+                actual_call=False,
+                engine_type="NOT_CONFIGURED",
+                tokens_prompt=0,
+                tokens_completion=0,
+                latency_ms=0.0
+            )
         return LLMResponse(
-            content=json.dumps(mock_resp),
-            structured_json=mock_resp,
+            content="",
             model_used=f"ollama/{self.model}",
-            tokens_prompt=50,
-            tokens_completion=30
+            status="NOT_CONFIGURED",
+            actual_call=False,
+            engine_type="NOT_CONFIGURED"
         )
 
 
@@ -288,6 +318,14 @@ class LLMGateway:
     Central Gateway enforcing model capability checks, runtime fallbacks,
     and provider routing.
     """
+    _instance: Optional["LLMGateway"] = None
+
+    @classmethod
+    def get_instance(cls) -> "LLMGateway":
+        if cls._instance is None:
+            cls._instance = LLMGateway()
+        return cls._instance
+
     def __init__(
         self,
         openrouter_provider: Optional[OpenRouterProvider] = None,
@@ -298,6 +336,38 @@ class LLMGateway:
         
         # Validate default model on startup
         self._startup_validation()
+        LLMGateway._instance = self
+
+    def is_configured(self) -> bool:
+        """Returns True if an OpenRouter API key is set in environment or provider."""
+        api_key = self.openrouter.api_key or os.getenv("OPENROUTER_API_KEY", "")
+        if api_key and not self.openrouter.api_key:
+            self.openrouter.api_key = api_key
+        return bool(api_key and api_key.strip() and api_key != "mock")
+
+    def generate_completion(
+        self,
+        prompt: str,
+        system_prompt: str = "You are an autonomous tier-3 SOC investigation planner.",
+        model_id: Optional[str] = None,
+        temperature: float = 0.1
+    ) -> Dict[str, Any]:
+        """Generates completion via openrouter provider."""
+        resp = self.openrouter.generate(
+            system_prompt=system_prompt,
+            user_prompt=prompt,
+            model_id=model_id,
+            temperature=temperature
+        )
+        return {
+            "content": resp.content,
+            "status": resp.status,
+            "model_used": resp.model_used,
+            "actual_call": resp.actual_call,
+            "tokens_prompt": resp.tokens_prompt,
+            "tokens_completion": resp.tokens_completion,
+            "latency_ms": resp.latency_ms
+        }
 
     def _startup_validation(self):
         default_model = self.openrouter.default_model

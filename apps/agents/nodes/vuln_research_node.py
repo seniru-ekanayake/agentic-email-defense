@@ -28,11 +28,16 @@ class VulnResearchNode:
     def execute(self, state: SecurityState) -> SecurityState:
         logger.info("VulnResearchNode executing...")
         
-        # 1. Identify CVEs in evidence or exploit indicators
-        cves_to_research = set()
+        # 1. Identify candidate CVEs from asset exposure context or verified threat intel evidence
+        cves_to_research: List[str] = []
+        for asset in state.get("asset_context", []):
+            for cve in asset.get("associated_cves", []):
+                if cve not in cves_to_research:
+                    cves_to_research.append(cve)
+
         for ev in state.get("evidence", []):
-            if ev.get("cve"):
-                cves_to_research.add(ev["cve"])
+            if ev.get("cve") and ev["cve"] not in cves_to_research:
+                cves_to_research.append(ev["cve"])
 
         assessments: List[Dict[str, Any]] = []
 
@@ -60,14 +65,19 @@ class VulnResearchNode:
                         user_prompt=user_prompt,
                         response_schema={"type": "object"}
                     )
-                    # Merge deterministic assessment with verified model output
                     merged_dict = base_assessment.model_dump()
-                    if llm_resp.structured_json and "interaction_required" in llm_resp.structured_json:
-                        merged_dict["interaction_required"] = llm_resp.structured_json["interaction_required"]
+                    if llm_resp.actual_call and llm_resp.status == "COMPLETED" and llm_resp.structured_json:
+                        if "interaction_required" in llm_resp.structured_json:
+                            merged_dict["interaction_required"] = llm_resp.structured_json["interaction_required"]
+                        merged_dict["assessment_engine"] = "HYBRID"
+                    else:
+                        merged_dict["assessment_engine"] = "RULE_ENGINE"
                     assessments.append(merged_dict)
                 except Exception as e:
-                    logger.warning(f"LLM reasoning fallback to deterministic assessment: {e}")
-                    assessments.append(base_assessment.model_dump())
+                    logger.warning(f"LLM call failed, using deterministic assessment: {e}")
+                    fallback_dict = base_assessment.model_dump()
+                    fallback_dict["assessment_engine"] = "RULE_ENGINE"
+                    assessments.append(fallback_dict)
 
         state["vulnerability_context"] = assessments
         

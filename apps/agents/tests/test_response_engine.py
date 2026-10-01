@@ -24,8 +24,13 @@ from packages.schemas.python.models import ToolProposal, RiskLevel
 class TestResponseEngine(unittest.TestCase):
 
     def setUp(self):
+        os.environ["TEST_MODE"] = "1"
         self.tool_registry = ToolRegistry()
         self.policy_engine = ResponsePolicyEngine(tool_registry=self.tool_registry)
+
+    def tearDown(self):
+        os.environ.pop("TEST_MODE", None)
+
 
     def test_autonomy_level_0_observe_only(self):
         """Autonomy level 0 must never execute actions or create pending approvals."""
@@ -135,6 +140,22 @@ class TestResponseEngine(unittest.TestCase):
         self.assertTrue(res_block.executed)
         self.assertTrue(res_block.output.get("entry_added"))
 
+    def test_unconfigured_external_gateways_fail_closed(self):
+        """When gateways are unconfigured and TEST_MODE is off, actions must transparently return NOT_CONFIGURED."""
+        os.environ.pop("TEST_MODE", None)
+        prop_quarantine = ToolProposal(
+            tool_name="quarantine_email",
+            parameters={"message_id": "msg-unconf", "mailbox": "user@corp"},
+            reasoning="Quarantine test without gateway"
+        )
+        self.policy_engine.set_tenant_policy(TenantResponsePolicy(tenant_id="tenant-unconf", autonomy_level=4))
+        res = self.policy_engine.evaluate_and_execute("tenant-unconf", prop_quarantine)
+        self.assertTrue(res.executed)
+        self.assertEqual(res.output.get("status"), "NOT_CONFIGURED")
+        self.assertEqual(res.output.get("execution_state"), "DISPATCH_FAILED")
+        self.assertFalse(res.output.get("confirmed"))
+
 
 if __name__ == "__main__":
     unittest.main()
+
