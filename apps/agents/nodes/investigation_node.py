@@ -45,11 +45,14 @@ class InvestigationNode:
         assessment_obj = EmailExploitabilityAssessment(**vuln_list[0]) if vuln_list else None
         email_rep_obj = EmailAttackRepresentation(**email_dict) if email_dict else None
 
+        evidence_items_initial = state.get("evidence", [])
+        observed_auth_fail = any("SPF/DMARC failure" in str(e) or "Sender Spoofing" in str(e) for e in evidence_items_initial)
+
         scores_obj = self.scoring_engine.score(
             asset=asset_obj,
             assessment=assessment_obj,
             email_rep=email_rep_obj,
-            observed_auth_anomaly=True
+            observed_auth_anomaly=observed_auth_fail
         )
         state["scores"] = scores_obj.model_dump()
         state["confidence"] = scores_obj.compromise_confidence
@@ -98,8 +101,13 @@ class InvestigationNode:
         has_test_domain = any(".invalid" in str(u.get("url", "")) or ".example" in str(u.get("url", "")) or u.get("reputation") == "inert_test_domain" for u in email_dict.get("urls", []))
         has_active_scripts = any("ACTIVE_SCRIPTING" in str(e) or "<script>" in str(e) for e in evidence_items)
 
-        # 5. Build & Upsert Attack Graph
-        threat_actor_attribution = "Storm-0978" if has_rendering_exploit and cve_id else None
+        # 5. Build & Upsert Attack Graph (Ground in verified intel only; no hardcoded actors)
+        threat_actor_attribution = None
+        for ev in evidence_items:
+            if "threat_actor" in ev:
+                threat_actor_attribution = ev["threat_actor"]
+                break
+
         graph_data = self.graph_repo.upsert_observation(
             email_id=email_dict.get("message_id", "msg-unknown"),
             sender_domain=sender_domain,

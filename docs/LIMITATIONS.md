@@ -36,9 +36,10 @@ Investigations operating in `LLM_PLANNER` or `HYBRID` modes exhibit a substantia
 
 FishingMails provides a sandboxed URL inspection environment with explicit functional limitations:
 
-- **Browser DOM & Network Inspection Only**: The Playwright sandbox operates in a containerized headless browser. It records DOM tree elements, extracts form submission actions, detects credential-harvesting input fields, captures full-page visual screenshots, and monitors HTTP network requests.
-- **NO Native Binary / PE Kernel Detonation**: The sandbox does **not** execute Windows Portable Executable (`.exe`, `.dll`) binaries, MSI installers, or PowerShell/VBScript payloads. It does not provide kernel-level instrumentation, memory dump analysis, or hypervisor-level OS emulation.
-- **File Payloads**: Non-HTML file attachments are evaluated statically (SHA-256 hash lookup against CISA KEV/known threat databases, MIME magic mismatch detection, and archive structure evaluation). They are **not** dynamically executed.
+- **Browser Runtime Status**: On headless host environments lacking Playwright browser binaries, browser automation is declared transparently as `BROWSER_RUNTIME_UNAVAILABLE`. In this mode, link analysis operates via `STATIC_URL_ANALYSIS` and live HTTP network fetches protected by `NetworkGuard`.
+- **NO Native Binary / PE Kernel Detonation**: The sandbox does **not** execute Windows Portable Executable (`.exe`, `.dll`) binaries, MSI installers, or PowerShell/VBScript payloads. Attachment inspection is strictly static: archive container parsing, PE header extraction, and MOTW bypass identification.
+- **Threat Intelligence Feed Keys**: AbuseIPDB queries require `ABUSEIPDB_API_KEY`. If unconfigured, the engine returns `NOT_CONFIGURED / UNAVAILABLE` and relies on Quad9 DoH and URLhaus feeds.
+- **CISA KEV Snapshot**: The bundled CISA Known Exploited Vulnerabilities catalog is an offline snapshot dated `2024-02-13`. Live updates require scheduled sync.
 
 ---
 
@@ -49,17 +50,25 @@ The platform currently provides several email ingestion adapters, with differing
 | Connector | Status | Verified Functionality | Operational Limitation |
 | :--- | :--- | :--- | :--- |
 | **Raw RFC 822 / MIME (.eml)** | `VERIFIED` | Full parsing, attachment unpacking, header decoding, HTML sanitization. | Requires file drops or direct byte stream ingestion. |
-| **M365 Graph Adapter** | `IMPLEMENTED / NOT FULLY VERIFIED` | OAuth2 authentication flow, Graph API schema parsing, message fetch. | Tested with simulated Graph responses; requires active Azure tenant registration and tenant admin consent for live mail polling. |
-| **Gmail API Adapter** | `IMPLEMENTED / NOT FULLY VERIFIED` | Service account auth, REST message retrieval, label management. | Tested via mock API responses; live deployment requires Google Cloud Workspace project verification. |
-| **IMAP Daemon** | `IMPLEMENTED / NOT FULLY VERIFIED` | Protocol connection, folder polling, SSL/TLS handshake. | Tested against standard local IMAP fixtures; high-concurrency connection pooling is not verified. |
+| **M365 Graph Adapter** | `WEBHOOK_PARSER_ONLY` | Inbound JSON webhook payload parsing into canonical models. | Active polling/syncing requires tenant admin credentials. |
+| **Gmail API Adapter** | `WEBHOOK_PARSER_ONLY` | Inbound push notification payload parsing into canonical models. | Active REST message retrieval requires Google Workspace service account. |
+| **IMAP Daemon** | `WEBHOOK_PARSER_ONLY` | Protocol schema mapping and parser normalization. | High-concurrency background mailbox sync requires dedicated worker daemon. |
 
 ---
 
-## 5. SIEM & SOAR Integration Status
+## 5. Defensive Response Actions Status
 
-- **Webhooks**: `VERIFIED`. HTTP POST webhooks deliver structured JSON incident notifications upon forensic completion.
-- **CEF / Syslog Export**: `PLANNED`. Formatting incident records into Common Event Format (CEF) strings is architecturally planned, but direct forwarder daemons to external SIEM collectors (e.g., Splunk HEC, Microsoft Sentinel data collectors) are not currently implemented.
-- **Active Directory / Okta Identity Revocation**: `IMPLEMENTED / NOT FULLY VERIFIED`. Core remediation wrappers exist in `ToolRegistry` (Level 4 actions), but production credential provisioning to live Active Directory / Azure AD tenants requires customer-specific API credentials.
+- **Safety Gate**: `VERIFIED`. High-risk actions (`quarantine_email`, `revoke_session`, `disable_account`, `block_sender`, `block_ioc`, `force_password_reset`) are strictly held for human analyst approval at tenant autonomy levels 1 and 2.
+- **External Dispatchers**: `CONFIG_REQUIRED`. Unless live mail gateway (`MAIL_GATEWAY_URL`), IdP (`IDP_API_URL`), or firewall APIs are configured in the environment, response actions return:
+  ```json
+  {
+    "status": "NOT_CONFIGURED",
+    "execution_state": "DISPATCH_FAILED",
+    "confirmed": false,
+    "detail": "Target connector is NOT_CONFIGURED in this environment. Action proposed but not dispatched."
+  }
+  ```
+  The platform **never** returns fake static `SUCCESS` for unconfigured connectors.
 
 ---
 

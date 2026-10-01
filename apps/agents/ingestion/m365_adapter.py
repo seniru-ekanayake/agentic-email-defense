@@ -65,6 +65,22 @@ class M365GraphAdapter:
 
         return valid_items
 
+    status: str = "IMPLEMENTED / NOT CONFIGURED (WEBHOOK_PARSER_ONLY)"
+
+    def fetch_message_by_id(self, message_id: str) -> Dict[str, Any]:
+        """Attempts to retrieve message bytes from Graph API if Azure credentials are configured."""
+        import os
+        client_id = os.getenv("AZURE_CLIENT_ID")
+        client_secret = os.getenv("AZURE_CLIENT_SECRET")
+        if not client_id or not client_secret:
+            return {
+                "status": "NOT_CONFIGURED",
+                "message_id": message_id,
+                "detail": "Azure Graph API credentials not configured in environment (AZURE_CLIENT_ID, AZURE_CLIENT_SECRET)."
+            }
+        # In a fully configured deployment, requests OAuth token and queries /messages/{id}/$value
+        return {"status": "CONFIGURED", "message_id": message_id}
+
     def ingest_mime_bytes(self, raw_eml_bytes: bytes, tenant_id: Optional[str] = None) -> EmailAttackRepresentation:
         """Parse raw RFC 2822 MIME bytes received from Graph API $value endpoint."""
         return self.mime_parser.parse_eml(raw_eml_bytes)

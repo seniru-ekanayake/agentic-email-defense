@@ -62,14 +62,22 @@ class SecurityGraphStreamer:
             data={"tenant_id": tenant_id}
         )
         await asyncio.sleep(0.01)  # Yield to event loop
-        state = await asyncio.to_thread(self.ingestion_node.execute, state)
-        
-        yield AgentEvent(
-            event_type="thought",
-            stage="INGESTION",
-            message="Data privacy boundary evaluated. Payload classified and routed.",
-            data={"classification": state.get("classification", "INTERNAL")}
-        )
+        try:
+            state = await asyncio.to_thread(self.ingestion_node.execute, state)
+            yield AgentEvent(
+                event_type="thought",
+                stage="INGESTION",
+                message="Data privacy boundary evaluated. Payload classified and routed.",
+                data={"classification": state.get("classification", "INTERNAL")}
+            )
+        except Exception as e:
+            logger.error(f"Error in INGESTION stage: {e}")
+            yield AgentEvent(
+                event_type="agent.tool.failed",
+                stage="INGESTION",
+                message=f"TOOL_FAILURE in IngestionNode: {str(e)}",
+                data={"error": str(e), "status": "TOOL_FAILURE", "fallback_action": "Apply safe default boundary"}
+            )
 
         # --- Stage 2: Email Analysis & Dynamic Skill Activation ---
         yield AgentEvent(
@@ -79,17 +87,25 @@ class SecurityGraphStreamer:
             data={"message_id": state.get("email_representation", {}).get("message_id")}
         )
         await asyncio.sleep(0.01)
-        state = await asyncio.to_thread(self.email_analysis_node.execute, state)
-
-        active_skills = state.get("activated_skills", [])
-        if active_skills:
-            for skill in active_skills:
-                yield AgentEvent(
-                    event_type="skill_activated",
-                    stage="ANALYSIS",
-                    message=f"Dynamically activated forensic playbook: '{skill}'",
-                    data={"skill_name": skill}
-                )
+        try:
+            state = await asyncio.to_thread(self.email_analysis_node.execute, state)
+            active_skills = state.get("activated_skills", [])
+            if active_skills:
+                for skill in active_skills:
+                    yield AgentEvent(
+                        event_type="skill_activated",
+                        stage="ANALYSIS",
+                        message=f"Dynamically activated forensic playbook: '{skill}'",
+                        data={"skill_name": skill}
+                    )
+        except Exception as e:
+            logger.error(f"Error in ANALYSIS stage: {e}")
+            yield AgentEvent(
+                event_type="agent.tool.failed",
+                stage="ANALYSIS",
+                message=f"TOOL_FAILURE in EmailAnalysisNode: {str(e)}",
+                data={"error": str(e), "status": "TOOL_FAILURE", "fallback_action": "Proceed with extracted raw headers"}
+            )
 
         # --- Stage 3: Vulnerability & Threat Intelligence Research ---
         yield AgentEvent(
@@ -99,16 +115,24 @@ class SecurityGraphStreamer:
             data={}
         )
         await asyncio.sleep(0.01)
-        state = await asyncio.to_thread(self.vuln_research_node.execute, state)
-
-        vuln_ctx = state.get("vulnerability_context", [])
-        if vuln_ctx:
-            cve_id = vuln_ctx[0].get("cve", "CVE-UNKNOWN")
+        try:
+            state = await asyncio.to_thread(self.vuln_research_node.execute, state)
+            vuln_ctx = state.get("vulnerability_context", [])
+            if vuln_ctx:
+                cve_id = vuln_ctx[0].get("cve", "CVE-UNKNOWN")
+                yield AgentEvent(
+                    event_type="evidence",
+                    stage="VULN_RESEARCH",
+                    message=f"Identified high-exploitability vulnerability: {cve_id}",
+                    data={"cve": cve_id, "assessment": vuln_ctx[0]}
+                )
+        except Exception as e:
+            logger.error(f"Error in VULN_RESEARCH stage: {e}")
             yield AgentEvent(
-                event_type="evidence",
+                event_type="agent.tool.failed",
                 stage="VULN_RESEARCH",
-                message=f"Identified high-exploitability vulnerability: {cve_id}",
-                data={"cve": cve_id, "assessment": vuln_ctx[0]}
+                message=f"TOOL_FAILURE in VulnResearchNode: {str(e)}",
+                data={"error": str(e), "status": "TOOL_FAILURE", "fallback_action": "Rely strictly on deterministic rule baseline"}
             )
 
         # --- Stage 4: Exposure & Attack Surface Correlation ---
@@ -119,7 +143,16 @@ class SecurityGraphStreamer:
             data={}
         )
         await asyncio.sleep(0.01)
-        state = await asyncio.to_thread(self.exposure_node.execute, state)
+        try:
+            state = await asyncio.to_thread(self.exposure_node.execute, state)
+        except Exception as e:
+            logger.error(f"Error in EXPOSURE stage: {e}")
+            yield AgentEvent(
+                event_type="agent.tool.failed",
+                stage="EXPOSURE",
+                message=f"TOOL_FAILURE in ExposureNode: {str(e)}",
+                data={"error": str(e), "status": "TOOL_FAILURE", "fallback_action": "Assume default enterprise asset exposure"}
+            )
 
         # --- Stage 5: Investigation & Campaign Deduplication ---
         yield AgentEvent(
@@ -129,15 +162,23 @@ class SecurityGraphStreamer:
             data={}
         )
         await asyncio.sleep(0.01)
-        state = await asyncio.to_thread(self.investigation_node.execute, state)
-
-        camp_ctx = state.get("campaign_context", {})
-        if camp_ctx:
+        try:
+            state = await asyncio.to_thread(self.investigation_node.execute, state)
+            camp_ctx = state.get("campaign_context", {})
+            if camp_ctx:
+                yield AgentEvent(
+                    event_type="thought",
+                    stage="INVESTIGATION",
+                    message=f"Campaign cluster: {camp_ctx.get('campaign_id')} (Total: {camp_ctx.get('total_emails_in_campaign')} emails, {camp_ctx.get('unique_recipients_count')} targets)",
+                    data=camp_ctx
+                )
+        except Exception as e:
+            logger.error(f"Error in INVESTIGATION stage: {e}")
             yield AgentEvent(
-                event_type="thought",
+                event_type="agent.tool.failed",
                 stage="INVESTIGATION",
-                message=f"Campaign cluster: {camp_ctx.get('campaign_id')} (Total: {camp_ctx.get('total_emails_in_campaign')} emails, {camp_ctx.get('unique_recipients_count')} targets)",
-                data=camp_ctx
+                message=f"TOOL_FAILURE in InvestigationNode: {str(e)}",
+                data={"error": str(e), "status": "TOOL_FAILURE", "fallback_action": "Apply baseline risk scoring heuristic"}
             )
 
         # --- Stage 6: Response Planning & Policy Gating ---
@@ -148,15 +189,23 @@ class SecurityGraphStreamer:
             data={"autonomy_level": state.get("autonomy_level", 1)}
         )
         await asyncio.sleep(0.01)
-        state = await asyncio.to_thread(self.response_node.execute, state)
-
-        proposed_tools = state.get("proposed_tools", [])
-        for prop in proposed_tools:
+        try:
+            state = await asyncio.to_thread(self.response_node.execute, state)
+            proposed_tools = state.get("proposed_tools", [])
+            for prop in proposed_tools:
+                yield AgentEvent(
+                    event_type="proposal",
+                    stage="RESPONSE",
+                    message=f"Response Proposal: {prop.get('tool_name')} - Reasoning: {prop.get('reasoning')}",
+                    data=prop
+                )
+        except Exception as e:
+            logger.error(f"Error in RESPONSE stage: {e}")
             yield AgentEvent(
-                event_type="proposal",
+                event_type="agent.tool.failed",
                 stage="RESPONSE",
-                message=f"Response Proposal: {prop.get('tool_name')} - Reasoning: {prop.get('reasoning')}",
-                data=prop
+                message=f"TOOL_FAILURE in ResponseNode: {str(e)}",
+                data={"error": str(e), "status": "TOOL_FAILURE", "fallback_action": "Hold all actions for analyst review"}
             )
 
         # --- Workflow Complete ---
@@ -166,10 +215,10 @@ class SecurityGraphStreamer:
             stage="RESPONSE",
             message=f"Triage complete. Incident created: '{incident.get('title')}' (Score: {incident.get('overall_risk_score')})",
             data={
-                "incident_title": incident.get("title"),
-                "severity": incident.get("severity"),
-                "overall_risk_score": incident.get("overall_risk_score"),
-                "confidence": state.get("confidence"),
+                "incident_title": incident.get("title", "Investigation Completed"),
+                "severity": incident.get("severity", "LOW"),
+                "overall_risk_score": incident.get("overall_risk_score", 0.0),
+                "confidence": state.get("confidence", 0.5),
                 "incident_report": incident,
                 "pending_approvals": state.get("pending_approvals", []),
                 "executed_responses": state.get("executed_responses", [])

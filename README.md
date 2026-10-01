@@ -26,6 +26,8 @@ This repository has completed formal adversarial validation and runtime verifica
 - [**Security Model (`docs/SECURITY_MODEL.md`)**](file:///c:/Enterprise%20Agentic%20Email%20Exploitation%20Detection%20&%20Response%20Platform/docs/SECURITY_MODEL.md): Threat vectors, prompt injection boundaries, `NetworkGuard` SSRF prevention, and HMAC authorization tokens.
 - [**Operational Limitations (`docs/LIMITATIONS.md`)**](file:///c:/Enterprise%20Agentic%20Email%20Exploitation%20Detection%20&%20Response%20Platform/docs/LIMITATIONS.md): Transparent account of latency constraints, rate limits, sandbox boundaries, and connector status.
 - [**Empirical Validation Report (`docs/VALIDATION.md`)**](file:///c:/Enterprise%20Agentic%20Email%20Exploitation%20Detection%20&%20Response%20Platform/docs/VALIDATION.md): Detailed verification history, test fixtures, scorecard, and latency distributions across 31 live API tests.
+- [**Post-Remediation Validation (`docs/POST_REMEDIATION_VALIDATION.md`)**](file:///c:/Enterprise%20Agentic%20Email%20Exploitation%20Detection%20&%20Response%20Platform/docs/POST_REMEDIATION_VALIDATION.md): Forensic resolution report verifying production graph integration, authentic wall-clock timing, zero fake results, and 20-run benchmarks.
+
 
 ---
 
@@ -217,9 +219,10 @@ The parsing subsystem decomposes emails without executing active scripts:
 
 ## 16. Multi-Tenancy Architecture
 
-- **Partitioned State**: All forensic records and graph nodes contain a mandatory `tenant_id` field.
+- **Partitioned State**: All forensic records, durable SQLite state tables, and graph nodes contain a mandatory `tenant_id` field and index.
 - **Independent Policies**: Each tenant maintains an independent `TenantPolicyProfile` with isolated autonomy levels and webhook destinations.
-- **Cross-Tenant Boundary**: Queries without matching tenant credentials are authorization-rejected at the data tier.
+- **Cross-Tenant Boundary**: Queries attempting access to another tenant's incident are authorization-rejected at the service data tier (`PermissionError`), triggering `HTTP 403 Forbidden` at the REST API layer.
+
 
 ---
 
@@ -236,6 +239,7 @@ Key results from the Round 2 live validation audit:
 
 ## 18. Performance Profile
 
+### 18.1 Planner Step Latency Profile
 Empirical measurements across 31 live OpenRouter invocations:
 
 | Dimension | RuleBasedPlanner | LLMPlanner (Live OpenRouter) |
@@ -245,6 +249,19 @@ Empirical measurements across 31 live OpenRouter invocations:
 | **95th Percentile (P95)** | **0.025 s** | **34.35 s** |
 | **Cost per Inspection** | $0.00 | Free-tier evaluated / token-dependent |
 | **Throughput Suitability** | High-throughput inline MTA | Asynchronous out-of-band SOC queue |
+
+### 18.2 End-to-End Investigation Benchmarks (Post-Remediation 20-Run Suite)
+Empirical measurements across complete end-to-end investigations via `SecurityGraph`:
+
+| Metric | Measured Value | Scope |
+| :--- | :--- | :--- |
+| **Time-to-Verdict P50** | **145.28 ms** | Fast-path deterministic classification |
+| **Time-to-Verdict P95** | **9,340.08 ms** | Deep investigative enrichment & multi-tool dispatch |
+| **Time-to-Verdict Mean** | **2,413.03 ms** | Aggregate across all scenario profiles |
+| **Tool Execution Overhead** | **101.06 ms** | Mean per-tool wall-clock execution |
+| **Peak Process Memory** | **22.83 MB** | Resident process memory footprint |
+| **Active Memory Footprint** | **21.68 MB** | Steady-state runtime heap |
+
 
 ---
 

@@ -106,7 +106,7 @@ class AttackSurfaceScoringEngine:
             confidence += 0.15
             evidence.append({"factor": "Post-Delivery Auth Anomaly", "impact": 15.0, "reasoning": "Correlated authentication or session activity observed after delivery."})
         if assessment and assessment.confidence:
-            confidence = (confidence + assessment.confidence) / 2.0
+            confidence = max(confidence, assessment.confidence)
         confidence = min(round(confidence, 2), 0.99)
 
         # 8. Business Impact (0-100)

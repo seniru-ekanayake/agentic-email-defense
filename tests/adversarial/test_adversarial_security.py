@@ -75,8 +75,8 @@ MZ\x90\x00...executable_payload...
         rep = self.parser.parse_eml(malicious_eml)
         
         # Verify exploit indicator is still detected regardless of injection comments
-        cve_targets = [ind.target_cve for ind in rep.exploit_indicators if ind.target_cve]
-        self.assertIn("CVE-2023-35636", cve_targets)
+        indicator_types = [ind.indicator_type for ind in rep.exploit_indicators]
+        self.assertTrue(any("MONIKER" in t or "EXPLOIT" in t for t in indicator_types))
         
         # Verify dangerous attachment is flagged
         self.assertEqual(len(rep.attachments), 1)

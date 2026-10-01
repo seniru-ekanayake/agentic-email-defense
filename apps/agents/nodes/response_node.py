@@ -15,7 +15,7 @@ logger = logging.getLogger("ResponseNode")
 
 class ResponseNode:
     def __init__(self, tool_registry: Optional[ToolRegistry] = None):
-        self.tool_registry = tool_registry or ToolRegistry()
+        self.tool_registry = tool_registry or ToolRegistry.get_instance()
 
     def execute(self, state: SecurityState) -> SecurityState:
         logger.info("ResponseNode executing...")

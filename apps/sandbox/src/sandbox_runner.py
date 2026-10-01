@@ -74,9 +74,9 @@ class SandboxRunner:
                 )
             )
 
-        # 2. Observe Forced Monikers and UNC Callouts (e.g. CVE-2023-35636 / search-ms)
+        # 2. Observe Forced Monikers and UNC Callouts (e.g. search-ms / moniker URIs)
         for ind in email_rep.exploit_indicators:
-            if ind.indicator_type == "RENDERING_EXPLOIT_URI":
+            if ind.indicator_type in ("RENDERING_EXPLOIT_URI", "MONIKER_URI_OBSERVED"):
                 rendering_anomalies.append(f"Forced URI rendering trigger: {ind.evidence}")
                 dom_mutations.append(
                     DomMutationEvent(
@@ -141,5 +141,7 @@ class SandboxRunner:
             ssrf_attempts=ssrf_attempts,
             forced_callout_destinations=forced_callout_destinations,
             is_benign=is_benign,
-            summary=summary
+            summary=summary,
+            browser_runtime_status="BROWSER_RUNTIME_UNAVAILABLE",
+            execution_mode="STATIC_HTML_INSPECTION"
         )

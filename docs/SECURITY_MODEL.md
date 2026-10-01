@@ -142,8 +142,20 @@ Human-in-the-loop approvals are secured cryptographically using HMAC tokens:
 
 ## 7. Multi-Tenant Isolation Invariants
 
-FishingMails provides multi-tenant segmentation:
+FishingMails provides strict multi-tenant segmentation:
 
-- **Partitioned Persistence**: State databases, forensic ledgers, and attack graph nodes maintain a mandatory `tenant_id` foreign key.
-- **Cross-Tenant Leak Prevention**: API routes require tenant authentication context; queries without matching tenant identifiers are rejected at the data access layer.
+- **Partitioned Persistence**: State databases, forensic ledgers, and attack graph nodes maintain a mandatory `tenant_id` column and index.
+- **Data Tier Access Boundary**: The investigation service layer enforces strict tenant validation on incident retrieval (`investigation_service.get_incident(incident_id, tenant_id=...)`). Any query attempting cross-tenant access immediately raises a `PermissionError`.
+- **API Boundary Enforcement**: The REST API layer (`apps/server.py`) traps `PermissionError` on `/api/v1/incidents/{incident_id}` and returns `HTTP 403 Forbidden`, preventing tenant telemetry enumeration or cross-tenant incident leakage.
 - **Independent Autonomy Profiles**: Tenant A's configuration of Level 3 autonomy does not alter Tenant B's strict Level 1 policy.
+
+---
+
+## 8. Remediation & External Tool Gating
+
+All investigative and remediation actions dispatched through `ToolRegistry` adhere to strict environment gating:
+
+- **Zero Simulated Success**: If an external containment integration (e.g., enterprise firewall, email gateway, identity provider) lacks configured credentials or API endpoints, the tool emits `status: NOT_CONFIGURED`, `execution_state: DISPATCH_FAILED`, and a transparent operational warning rather than a fabricated success signal.
+- **Threat Intel Feed Authenticity**: When external API keys (such as AbuseIPDB) are not provisioned in the environment, the feed returns `NOT_CONFIGURED / UNAVAILABLE` and falls back to verified offline indicators (e.g., offline CISA KEV snapshot).
+- **Network Sandbox Boundary**: Dynamic URL detonation strictly checks browser runtime availability. When Playwright is unavailable or headless environments lack graphical binaries, the sandbox transparently operates in `STATIC_URL_ANALYSIS` mode protected by `NetworkGuard`.
+
