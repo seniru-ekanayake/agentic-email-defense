@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" width="280" alt="FishingMails Logo">
+</p>
+
 # FishingMails
 
 > **Evidence-Driven Email Threat Investigation & Policy-Gated Automated Response Engine**
