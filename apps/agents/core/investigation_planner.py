@@ -241,10 +241,11 @@ class RuleBasedPlanner(InvestigationPlanner):
                 state.hypotheses["H-002"].status = "CLOSED"
                 state.hypotheses["H-002"].confidence = 0.05
 
-        # Q-03: URL Reputation & Sandbox
+        # Q-03: URL Threat Reputation & Behavioral Sandbox
         # Precondition: URL artifact exists
         has_url_artifact = any(a.artifact_type == "URL_STRING" for a in state.artifacts)
         if has_url_artifact:
+            target_url = next((str(a.raw_data) for a in state.artifacts if a.artifact_type == "URL_STRING"), "")
             if "Q-03" not in state.questions:
                 state.questions["Q-03"] = Question(
                     id="Q-03",
@@ -256,30 +257,80 @@ class RuleBasedPlanner(InvestigationPlanner):
             else:
                 ti_ran = any(t.tool_name in ["threat_intel_lookup", "ThreatIntelFeeds"] for t in state.executed_tools)
                 sandbox_ran = any(t.tool_name in ["url_sandbox_detonation", "UrlSandboxRunner"] for t in state.executed_tools)
-                url_ev = next((e for e in state.evidence.values() if getattr(e, "evidence_type", getattr(e, "type", "")) in ["URL_REPUTATION", "URL_NORMALIZED"]), None)
-                
-                if url_ev and any(k in url_ev.value.upper() for k in ["MALICIOUS", "PHISHING", "ATTACK", "CRITICAL"]):
+
+                # Explicit semantic lookup: Q-03 strictly requires URL_REPUTATION or BEHAVIORAL_SANDBOX.
+                # It MUST NOT match URL_NORMALIZED or generic URL artifacts.
+                # Evidence MUST be strictly scoped to target_url.
+                rep_ev = None
+                if hasattr(state, "get_latest_evidence"):
+                    rep_ev = state.get_latest_evidence("URL_REPUTATION", subject=target_url)
+                else:
+                    for e in reversed(list(state.evidence.values())):
+                        if getattr(e, "evidence_type", getattr(e, "type", "")) == "URL_REPUTATION":
+                            e_subj = getattr(e, "subject", None) or (e.metadata.get("subject") if hasattr(e, "metadata") else None)
+                            if e_subj is None or e_subj == target_url:
+                                rep_ev = e
+                                break
+
+
+                # Inspect structured metadata from ThreatIntelFeeds
+                is_rep_malicious = False
+                if rep_ev:
+                    is_rep_malicious = (
+                        rep_ev.metadata.get("is_malicious") is True
+                        or rep_ev.metadata.get("reputation") == "MALICIOUS"
+                        or "MALICIOUS" in rep_ev.value.upper()
+                    )
+
+                if is_rep_malicious:
+                    # Threat intelligence conclusively flagged URL as malicious.
+                    # Resolve Q-03 immediately; sandbox execution is not required.
                     state.questions["Q-03"].status = "RESOLVED"
+                    state.questions["Q-03"].resolution_evidence_id = rep_ev.id
                     state.hypotheses["H-003"].status = "SUPPORTED"
                     state.hypotheses["H-003"].confidence = 0.95
                 elif sandbox_ran:
+                    # Sandbox execution completed: evaluate BEHAVIORAL_SANDBOX evidence
+                    sb_ev = None
+                    if hasattr(state, "get_latest_evidence"):
+                        sb_ev = state.get_latest_evidence("BEHAVIORAL_SANDBOX", subject=target_url)
+                    else:
+                        for e in reversed(list(state.evidence.values())):
+                            if getattr(e, "evidence_type", getattr(e, "type", "")) == "BEHAVIORAL_SANDBOX":
+                                e_subj = getattr(e, "subject", None) or (e.metadata.get("subject") if hasattr(e, "metadata") else None)
+                                if e_subj is None or e_subj == target_url:
+                                    sb_ev = e
+                                    break
+
                     state.questions["Q-03"].status = "RESOLVED"
-                    sb_ev = next((e for e in state.evidence.values() if getattr(e, "evidence_type", getattr(e, "type", "")) == "BEHAVIORAL_SANDBOX"), None)
-                    if sb_ev and any(k in sb_ev.value.upper() for k in ["FORCED", "ANOMALY", "MALICIOUS", "CALLOUT"]):
-                        state.hypotheses["H-003"].status = "SUPPORTED"
-                        state.hypotheses["H-003"].confidence = 0.90
+                    if sb_ev:
+                        state.questions["Q-03"].resolution_evidence_id = sb_ev.id
+                        is_sb_anom = (
+                            sb_ev.metadata.get("is_benign") is False
+                            or sb_ev.metadata.get("risk_score", 0) >= 50
+                            or len(sb_ev.metadata.get("rendering_anomalies", [])) > 0
+                            or any(k in sb_ev.value.upper() for k in ["FORCED", "ANOMALY", "MALICIOUS", "CALLOUT"])
+                        )
+                        if is_sb_anom:
+                            state.hypotheses["H-003"].status = "SUPPORTED"
+                            state.hypotheses["H-003"].confidence = 0.90
+                        else:
+                            state.hypotheses["H-003"].status = "CLOSED"
+                            state.hypotheses["H-003"].confidence = 0.15
                     else:
                         state.hypotheses["H-003"].status = "CLOSED"
                         state.hypotheses["H-003"].confidence = 0.15
                 elif ti_ran:
-                    # Counterfactual branch: TI was UNKNOWN / clean / not conclusively malicious.
-                    # Q-03 remains UNRESOLVED, forcing the planner to dynamically select secondary inspection tool (UrlSandboxRunner)!
-                    pass
+                    # Counterfactual branch: Threat intelligence ran but returned UNKNOWN/CLEAN.
+                    # Q-03 remains UNRESOLVED, compelling the planner to evaluate remaining candidates
+                    # and dynamically branch to UrlSandboxRunner for deep behavioral analysis!
+                    state.questions["Q-03"].status = "UNRESOLVED"
         elif "Q-03" in state.questions:
             # Negative evidence: no URLs exist, so Q-03 is not applicable / resolved
             state.questions["Q-03"].status = "RESOLVED"
             state.hypotheses["H-003"].status = "CLOSED"
             state.hypotheses["H-003"].confidence = 0.0
+
 
         # Q-04: Moniker & Non-Network Schemes
         has_moniker_artifact = any(

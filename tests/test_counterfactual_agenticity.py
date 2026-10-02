@@ -54,6 +54,15 @@ class TestCounterfactualAgenticity(unittest.TestCase):
             value="SPF: Pass / DMARC: Aligned",
             source="MimeParser.HeaderAnalyzer"
         )
+        # Production baseline evidence includes URL_NORMALIZED
+        state.evidence["E-103"] = Evidence(
+            id="E-103",
+            evidence_type="URL_NORMALIZED",
+            value="http://suspicious-login-portal.cc/auth",
+            subject="http://suspicious-login-portal.cc/auth",
+            source="HTMLAnalyzer",
+            metadata={"url": "http://suspicious-login-portal.cc/auth", "normalization": "canonical"}
+        )
         # Baseline reconnaissance already completed
         state.executed_tools.append(ToolExecution(
             tool_name="UnicodeAnalyzer",
@@ -91,11 +100,13 @@ class TestCounterfactualAgenticity(unittest.TestCase):
             duration_ms=12.4,
             output_summary="Matched URLhaus malware registry: MALICIOUS"
         ))
-        state_malicious.evidence["E-103"] = Evidence(
-            id="E-103",
+        state_malicious.evidence["E-104"] = Evidence(
+            id="E-104",
             evidence_type="URL_REPUTATION",
-            value="MALICIOUS (URLhaus verified payload URL)",
-            source="ThreatIntelFeeds"
+            value="Threat intel reputation: MALICIOUS",
+            subject="http://suspicious-login-portal.cc/auth",
+            source="ThreatIntelFeeds",
+            metadata={"url": "http://suspicious-login-portal.cc/auth", "reputation": "MALICIOUS", "is_malicious": True}
         )
 
         # Scenario B: Threat intel feed returns UNKNOWN / NO_RECORDS
@@ -105,12 +116,15 @@ class TestCounterfactualAgenticity(unittest.TestCase):
             duration_ms=11.8,
             output_summary="Zero reputation records: UNKNOWN / CLEAN"
         ))
-        state_unknown.evidence["E-103"] = Evidence(
-            id="E-103",
+        state_unknown.evidence["E-104"] = Evidence(
+            id="E-104",
             evidence_type="URL_REPUTATION",
-            value="UNKNOWN / CLEAN (No records in Quad9 or URLhaus)",
-            source="ThreatIntelFeeds"
+            value="Threat intel reputation: UNKNOWN",
+            subject="http://suspicious-login-portal.cc/auth",
+            source="ThreatIntelFeeds",
+            metadata={"url": "http://suspicious-login-portal.cc/auth", "reputation": "UNKNOWN", "is_malicious": False}
         )
+
 
         # Step 2: Next planner decision under divergent evidence!
         dec2_mal = self.planner.propose_next_action(state_malicious, self.available_tools, self.permissions)

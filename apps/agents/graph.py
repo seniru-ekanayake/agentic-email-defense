@@ -37,7 +37,7 @@ class SecurityGraph:
     replanning, and true execution tracking.
     """
 
-    def __init__(self, planner: Optional[InvestigationPlanner] = None):
+    def __init__(self, planner: Optional[InvestigationPlanner] = None, tool_registry: Optional[ToolRegistry] = None):
         self.ingestion_node = IngestionNode()
         self.email_analysis_node = EmailAnalysisNode()
         self.vuln_research_node = VulnResearchNode()
@@ -45,7 +45,8 @@ class SecurityGraph:
         self.investigation_node = InvestigationNode()
         self.response_node = ResponseNode()
         self.planner = planner or HybridPlanner()
-        self.tool_registry = ToolRegistry.get_instance()
+        self.tool_registry = tool_registry or ToolRegistry.get_instance()
+
 
     def run(self, initial_state: SecurityState) -> SecurityState:
         """
@@ -168,11 +169,14 @@ class SecurityGraph:
                 id=f"E-{e_idx}",
                 evidence_type="URL_NORMALIZED",
                 value=u_str,
+                subject=u_str,
                 source="HTMLAnalyzer",
-                status="OBSERVED"
+                status="OBSERVED",
+                metadata={"url": u_str, "normalization": "canonical"}
             )
             inv_state.evidence[ev_u.id] = ev_u
             e_idx += 1
+
 
         # Match skills for prompt/forensic enrichment
         if hasattr(self, "email_analysis_node") and hasattr(self.email_analysis_node, "skill_registry"):
@@ -246,13 +250,21 @@ class SecurityGraph:
                     e_idx += 1
 
                 elif tool_name in ["threat_intel_lookup", "ThreatIntelFeeds"]:
-                    is_mal = out.get("is_malicious", False)
+                    is_mal = bool(out.get("is_malicious", False))
+                    rep_status = "MALICIOUS" if is_mal else "UNKNOWN"
                     ev_item = StateEvidence(
                         id=f"E-{e_idx}",
                         evidence_type="URL_REPUTATION",
-                        value=f"Threat intel reputation: {'MALICIOUS' if is_mal else 'UNKNOWN / CLEAN'}",
+                        value=f"Threat intel reputation: {rep_status}",
+                        subject=target_url,
                         source="ThreatIntelFeeds",
-                        status="OBSERVED"
+                        status="OBSERVED",
+                        metadata={
+                            "url": target_url,
+                            "reputation": rep_status,
+                            "is_malicious": is_mal,
+                            "details": out
+                        }
                     )
                     inv_state.evidence[ev_item.id] = ev_item
                     produced_e_ids.append(ev_item.id)
@@ -275,8 +287,15 @@ class SecurityGraph:
                         id=f"E-{e_idx}",
                         evidence_type="BEHAVIORAL_SANDBOX",
                         value=f"Sandbox DOM behavioral telemetry: risk {out.get('risk_score', 0)}/100 | Anomalies: {len(sb_tel.rendering_anomalies)}",
+                        subject=target_url,
                         source="UrlSandboxRunner",
-                        status="OBSERVED"
+                        status="OBSERVED",
+                        metadata={
+                            "url": target_url,
+                            "risk_score": out.get("risk_score", 0),
+                            "rendering_anomalies": sb_tel.rendering_anomalies,
+                            "is_benign": sb_tel.is_benign
+                        }
                     )
                     inv_state.evidence[ev_item.id] = ev_item
                     produced_e_ids.append(ev_item.id)

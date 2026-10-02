@@ -8,7 +8,9 @@ import os
 import uuid
 import datetime
 import logging
+import requests
 from typing import Dict, Any, List, Optional, Callable
+
 from pydantic import BaseModel, Field
 
 from packages.schemas.python.models import (
@@ -245,27 +247,115 @@ class ToolRegistry:
     def _register_default_tools(self):
         """Registers the core platform tools."""
         
-        # 1. Quarantine Email (MEDIUM risk)
-        # 1. Quarantine Email (MEDIUM risk)
-        def _handle_quarantine(p: Dict[str, Any]) -> Dict[str, Any]:
-            gw_url = os.getenv("MAIL_GATEWAY_URL") or os.getenv("M365_GRAPH_ENDPOINT") or os.getenv("TEST_MODE")
-            if not gw_url:
+        def _dispatch_external_webhook(
+            url: Optional[str],
+            action_name: str,
+            payload: Dict[str, Any],
+            auth_token: Optional[str] = None,
+            timeout_sec: float = 3.0
+        ) -> Dict[str, Any]:
+            """
+            Executes actual network HTTP POST dispatch to an external enterprise integration gateway.
+            Never fabricates SUCCESS: performs real I/O and maps HTTP response status codes accurately.
+            Distinguishes: NOT_CONFIGURED, SUCCESS, AUTH_FAILED, RATE_LIMITED, DISPATCH_FAILED, TIMEOUT, NETWORK_ERROR.
+            """
+            if not url or not str(url).strip():
                 return {
                     "status": "NOT_CONFIGURED",
                     "execution_state": "DISPATCH_FAILED",
                     "confirmed": False,
-                    "target": p.get("message_id"),
-                    "quarantined_count": 0,
-                    "detail": "Mail gateway / M365 quarantine connector NOT_CONFIGURED in environment."
+                    "action": action_name,
+                    "detail": f"Integration endpoint URL for '{action_name}' is not configured in environment."
                 }
-            # When connector is configured, dispatch external quarantine call
-            return {
-                "status": "SUCCESS",
-                "execution_state": "DISPATCHED",
-                "confirmed": True,
-                "target": p.get("message_id"),
-                "quarantined_count": 1
+
+            headers = {
+                "Content-Type": "application/json",
+                "User-Agent": "FishingMails-AutomatedResponse/1.0"
             }
+            if auth_token:
+                headers["Authorization"] = f"Bearer {auth_token}"
+
+            req_body = {
+                "action": action_name,
+                "parameters": payload,
+                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
+            }
+
+            try:
+                resp = requests.post(url, json=req_body, headers=headers, timeout=timeout_sec)
+                
+                if 200 <= resp.status_code < 300:
+                    resp_data = {}
+                    try:
+                        resp_data = resp.json()
+                    except Exception:
+                        resp_data = {"raw_text": resp.text[:200]}
+
+                    return {
+                        "status": "SUCCESS",
+                        "execution_state": "DISPATCHED",
+                        "confirmed": True,
+                        "http_status": resp.status_code,
+                        "action": action_name,
+                        "remote_response": resp_data
+                    }
+                elif resp.status_code in (401, 403):
+                    return {
+                        "status": "AUTH_FAILED",
+                        "execution_state": "DISPATCH_FAILED",
+                        "confirmed": False,
+                        "http_status": resp.status_code,
+                        "action": action_name,
+                        "detail": f"Gateway authentication failed with HTTP {resp.status_code}: {resp.text[:200]}"
+                    }
+                elif resp.status_code == 429:
+                    return {
+                        "status": "RATE_LIMITED",
+                        "execution_state": "DISPATCH_FAILED",
+                        "confirmed": False,
+                        "http_status": resp.status_code,
+                        "action": action_name,
+                        "detail": f"Gateway rate limit reached (HTTP 429): {resp.text[:200]}"
+                    }
+                else:
+                    return {
+                        "status": "DISPATCH_FAILED",
+                        "execution_state": "DISPATCH_FAILED",
+                        "confirmed": False,
+                        "http_status": resp.status_code,
+                        "action": action_name,
+                        "detail": f"Gateway responded with HTTP {resp.status_code}: {resp.text[:200]}"
+                    }
+            except requests.exceptions.Timeout as exc:
+                return {
+                    "status": "TIMEOUT",
+                    "execution_state": "DISPATCH_FAILED",
+                    "confirmed": False,
+                    "action": action_name,
+                    "detail": f"Request timed out after {timeout_sec}s: {exc}"
+                }
+            except (requests.exceptions.ConnectionError, requests.exceptions.RequestException) as exc:
+                return {
+                    "status": "NETWORK_ERROR",
+                    "execution_state": "DISPATCH_FAILED",
+                    "confirmed": False,
+                    "action": action_name,
+                    "detail": f"Network transmission error: {exc}"
+                }
+
+        # 1. Quarantine Email (MEDIUM risk)
+        def _handle_quarantine(p: Dict[str, Any]) -> Dict[str, Any]:
+            gw_url = os.getenv("MAIL_GATEWAY_URL") or os.getenv("M365_GRAPH_ENDPOINT")
+            auth_token = os.getenv("MAIL_GATEWAY_TOKEN") or os.getenv("M365_GRAPH_TOKEN")
+            dispatch_res = _dispatch_external_webhook(
+                url=gw_url,
+                action_name="quarantine_email",
+                payload=p,
+                auth_token=auth_token
+            )
+            dispatch_res["target"] = p.get("message_id")
+            dispatch_res["quarantined_count"] = 1 if dispatch_res.get("status") == "SUCCESS" else 0
+            return dispatch_res
 
         self.register_tool(
             ToolDefinition(
@@ -282,23 +372,17 @@ class ToolRegistry:
 
         # 2. Revoke Session (HIGH risk)
         def _handle_revoke_session(p: Dict[str, Any]) -> Dict[str, Any]:
-            idp_url = os.getenv("IDP_API_URL") or os.getenv("OKTA_API_TOKEN") or os.getenv("AZURE_AD_TOKEN") or os.getenv("TEST_MODE")
-            if not idp_url:
-                return {
-                    "status": "NOT_CONFIGURED",
-                    "execution_state": "DISPATCH_FAILED",
-                    "confirmed": False,
-                    "target_user": p.get("user_id"),
-                    "sessions_revoked": 0,
-                    "detail": "Identity provider session revocation API NOT_CONFIGURED in environment."
-                }
-            return {
-                "status": "SUCCESS",
-                "execution_state": "DISPATCHED",
-                "confirmed": True,
-                "target_user": p.get("user_id"),
-                "sessions_revoked": 1
-            }
+            idp_url = os.getenv("IDP_API_URL")
+            auth_token = os.getenv("IDP_API_TOKEN") or os.getenv("OKTA_API_TOKEN") or os.getenv("AZURE_AD_TOKEN")
+            dispatch_res = _dispatch_external_webhook(
+                url=idp_url,
+                action_name="revoke_session",
+                payload=p,
+                auth_token=auth_token
+            )
+            dispatch_res["target_user"] = p.get("user_id")
+            dispatch_res["sessions_revoked"] = 1 if dispatch_res.get("status") == "SUCCESS" else 0
+            return dispatch_res
 
         self.register_tool(
             ToolDefinition(
@@ -315,23 +399,17 @@ class ToolRegistry:
 
         # 3. Disable Account (CRITICAL risk)
         def _handle_disable_account(p: Dict[str, Any]) -> Dict[str, Any]:
-            ad_url = os.getenv("ACTIVE_DIRECTORY_URL") or os.getenv("OKTA_API_TOKEN") or os.getenv("TEST_MODE")
-            if not ad_url:
-                return {
-                    "status": "NOT_CONFIGURED",
-                    "execution_state": "DISPATCH_FAILED",
-                    "confirmed": False,
-                    "target_user": p.get("user_id"),
-                    "account_disabled": False,
-                    "detail": "Active Directory / IdP account disabling connector NOT_CONFIGURED in environment."
-                }
-            return {
-                "status": "SUCCESS",
-                "execution_state": "DISPATCHED",
-                "confirmed": True,
-                "target_user": p.get("user_id"),
-                "account_disabled": True
-            }
+            ad_url = os.getenv("ACTIVE_DIRECTORY_URL") or os.getenv("IDP_ACCOUNT_URL")
+            auth_token = os.getenv("ACTIVE_DIRECTORY_TOKEN") or os.getenv("OKTA_API_TOKEN")
+            dispatch_res = _dispatch_external_webhook(
+                url=ad_url,
+                action_name="disable_account",
+                payload=p,
+                auth_token=auth_token
+            )
+            dispatch_res["target_user"] = p.get("user_id")
+            dispatch_res["account_disabled"] = True if dispatch_res.get("status") == "SUCCESS" else False
+            return dispatch_res
 
         self.register_tool(
             ToolDefinition(
@@ -348,7 +426,7 @@ class ToolRegistry:
 
         # 4. Search Historical Mailbox Activity (LOW risk)
         def _handle_search_mailbox(p: Dict[str, Any]) -> Dict[str, Any]:
-            mail_api = os.getenv("MAIL_API_URL") or os.getenv("IMAP_SERVER") or os.getenv("TEST_MODE")
+            mail_api = os.getenv("MAIL_API_URL") or os.getenv("IMAP_SERVER")
             if not mail_api:
                 return {
                     "status": "NOT_CONFIGURED",
@@ -374,23 +452,17 @@ class ToolRegistry:
 
         # 5. Block Sender / Domain (MEDIUM risk)
         def _handle_block_sender(p: Dict[str, Any]) -> Dict[str, Any]:
-            gw_block_url = os.getenv("GATEWAY_BLOCK_URL") or os.getenv("M365_BLOCKLIST_URL") or os.getenv("TEST_MODE")
-            if not gw_block_url:
-                return {
-                    "status": "NOT_CONFIGURED",
-                    "execution_state": "DISPATCH_FAILED",
-                    "confirmed": False,
-                    "target": p.get("sender_or_domain"),
-                    "entry_added": False,
-                    "detail": "Mail gateway sender blocklist connector NOT_CONFIGURED in environment."
-                }
-            return {
-                "status": "SUCCESS",
-                "execution_state": "DISPATCHED",
-                "confirmed": True,
-                "target": p.get("sender_or_domain"),
-                "entry_added": True
-            }
+            gw_block_url = os.getenv("GATEWAY_BLOCK_URL") or os.getenv("M365_BLOCKLIST_URL")
+            auth_token = os.getenv("GATEWAY_BLOCK_TOKEN")
+            dispatch_res = _dispatch_external_webhook(
+                url=gw_block_url,
+                action_name="block_sender",
+                payload=p,
+                auth_token=auth_token
+            )
+            dispatch_res["target"] = p.get("sender_or_domain")
+            dispatch_res["entry_added"] = True if dispatch_res.get("status") == "SUCCESS" else False
+            return dispatch_res
 
         self.register_tool(
             ToolDefinition(
@@ -407,23 +479,17 @@ class ToolRegistry:
 
         # 6. Block IOC at Network Firewall (HIGH risk)
         def _handle_block_ioc(p: Dict[str, Any]) -> Dict[str, Any]:
-            fw_url = os.getenv("FIREWALL_API_URL") or os.getenv("EDR_BLOCK_URL") or os.getenv("TEST_MODE")
-            if not fw_url:
-                return {
-                    "status": "NOT_CONFIGURED",
-                    "execution_state": "DISPATCH_FAILED",
-                    "confirmed": False,
-                    "ioc": p.get("ioc_value"),
-                    "firewall_synced": False,
-                    "detail": "Perimeter firewall / EDR IOC block connector NOT_CONFIGURED in environment."
-                }
-            return {
-                "status": "SUCCESS",
-                "execution_state": "DISPATCHED",
-                "confirmed": True,
-                "ioc": p.get("ioc_value"),
-                "firewall_synced": True
-            }
+            fw_url = os.getenv("FIREWALL_API_URL") or os.getenv("EDR_BLOCK_URL")
+            auth_token = os.getenv("FIREWALL_API_TOKEN")
+            dispatch_res = _dispatch_external_webhook(
+                url=fw_url,
+                action_name="block_ioc",
+                payload=p,
+                auth_token=auth_token
+            )
+            dispatch_res["ioc"] = p.get("ioc_value")
+            dispatch_res["firewall_synced"] = True if dispatch_res.get("status") == "SUCCESS" else False
+            return dispatch_res
 
         self.register_tool(
             ToolDefinition(
@@ -440,16 +506,17 @@ class ToolRegistry:
 
         # 7. Force Password Reset (MEDIUM risk)
         def _handle_force_pwd_reset(p: Dict[str, Any]) -> Dict[str, Any]:
-            idp_pwd_url = os.getenv("IDP_PASSWORD_RESET_URL") or os.getenv("OKTA_API_TOKEN")
-            if not idp_pwd_url:
-                return {
-                    "status": "NOT_CONFIGURED",
-                    "execution_state": "DISPATCH_FAILED",
-                    "confirmed": False,
-                    "user_id": p.get("user_id"),
-                    "detail": "IdP password reset connector NOT_CONFIGURED in environment."
-                }
-            return {"status": "CONFIRMED", "execution_state": "DISPATCHED", "confirmed": True, "user_id": p.get("user_id")}
+            idp_pwd_url = os.getenv("IDP_PASSWORD_RESET_URL")
+            auth_token = os.getenv("IDP_PASSWORD_RESET_TOKEN")
+            dispatch_res = _dispatch_external_webhook(
+                url=idp_pwd_url,
+                action_name="force_password_reset",
+                payload=p,
+                auth_token=auth_token
+            )
+            dispatch_res["user_id"] = p.get("user_id")
+            dispatch_res["reset_flagged"] = True if dispatch_res.get("status") == "SUCCESS" else False
+            return dispatch_res
 
         self.register_tool(
             ToolDefinition(

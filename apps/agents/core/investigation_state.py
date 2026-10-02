@@ -29,8 +29,10 @@ class Evidence(BaseModel):
     confidence: float = 0.95
     status: str = "OBSERVED"  # OBSERVED, INFERRED, UNKNOWN, CONTRADICTED
     location: Optional[str] = None
+    subject: Optional[str] = None  # Exact entity under investigation, e.g. canonical URL, sender address, attachment filename
     metadata: Dict[str, Any] = Field(default_factory=dict)
     timestamp: str = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
+
 
 
 class Hypothesis(BaseModel):
@@ -125,3 +127,34 @@ class InvestigationState(BaseModel):
     is_complete: bool = False
     stop_reason: Optional[str] = None
     verdict: Optional[Verdict] = None
+
+    def get_latest_evidence(self, evidence_type: str, subject: Optional[str] = None) -> Optional[Evidence]:
+        """
+        Retrieves the latest observed evidence strictly matching the requested evidence_type and optional subject.
+        Iterates in reverse insertion order so the most recent findings take precedence.
+        """
+        for ev in reversed(list(self.evidence.values())):
+            ev_type = getattr(ev, "evidence_type", getattr(ev, "type", ""))
+            if ev_type == evidence_type:
+                if subject is not None:
+                    ev_subject = getattr(ev, "subject", None) or (ev.metadata.get("subject") if hasattr(ev, "metadata") else None) or getattr(ev, "location", None)
+                    if ev_subject is not None and ev_subject != subject:
+                        continue
+                return ev
+        return None
+
+    def get_evidence_by_type(self, evidence_type: str, subject: Optional[str] = None) -> List[Evidence]:
+        """
+        Retrieves all evidence records matching the exact evidence_type and optional subject.
+        """
+        matches = []
+        for ev in self.evidence.values():
+            ev_type = getattr(ev, "evidence_type", getattr(ev, "type", ""))
+            if ev_type == evidence_type:
+                if subject is not None:
+                    ev_subject = getattr(ev, "subject", None) or (ev.metadata.get("subject") if hasattr(ev, "metadata") else None) or getattr(ev, "location", None)
+                    if ev_subject is not None and ev_subject != subject:
+                        continue
+                matches.append(ev)
+        return matches
+
