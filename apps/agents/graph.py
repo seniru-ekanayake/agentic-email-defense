@@ -24,7 +24,13 @@ from apps.agents.core.investigation_state import (
     ToolExecution as StateToolExecution,
     PlannerDecision as StatePlannerDecision
 )
-from apps.agents.core.investigation_planner import InvestigationPlanner, HybridPlanner, RuleBasedPlanner
+from apps.agents.core.investigation_planner import (
+    InvestigationPlanner,
+    HybridPlanner,
+    RuleBasedPlanner,
+    LLMPlanner,
+    select_planner
+)
 from apps.agents.core.tool_registry import ToolRegistry
 
 logger = logging.getLogger("SecurityGraph")
@@ -37,14 +43,22 @@ class SecurityGraph:
     replanning, and true execution tracking.
     """
 
-    def __init__(self, planner: Optional[InvestigationPlanner] = None, tool_registry: Optional[ToolRegistry] = None):
+    def __init__(
+        self,
+        planner: Optional[InvestigationPlanner] = None,
+        tool_registry: Optional[ToolRegistry] = None,
+        planner_mode: str = "HYBRID",
+        hybrid_policy: str = "RULE_FIRST"
+    ):
         self.ingestion_node = IngestionNode()
         self.email_analysis_node = EmailAnalysisNode()
         self.vuln_research_node = VulnResearchNode()
         self.exposure_node = ExposureNode()
         self.investigation_node = InvestigationNode()
         self.response_node = ResponseNode()
-        self.planner = planner or HybridPlanner()
+        self.planner_mode = planner_mode
+        self.hybrid_policy = hybrid_policy
+        self.planner = planner
         self.tool_registry = tool_registry or ToolRegistry.get_instance()
 
 
@@ -188,12 +202,35 @@ class SecurityGraph:
             except Exception:
                 pass
 
+        # Select planner dynamically if requested in state or config
+        requested_mode = state.get("planner_mode") or self.planner_mode or "HYBRID"
+        requested_policy = state.get("hybrid_policy") or self.hybrid_policy or "RULE_FIRST"
+        
+        active_planner = self.planner
+        if active_planner is None:
+            active_planner = select_planner(
+                mode=requested_mode,
+                hybrid_policy=requested_policy,
+                tier_risk_score=state.get("risk_score")
+            )
+
+        inv_state.planner_requested = requested_mode.upper()
+        inv_state.planner_engine = requested_mode.upper()
+
+        # Track negative evidence for absent threat vectors
+        if not extracted_attachments:
+            inv_state.add_negative_evidence("no_attachment", "No MIME attachments found in message container")
+        if not urls:
+            inv_state.add_negative_evidence("no_url", "No URLs found in email body or headers")
+        if not auth_failed:
+            inv_state.add_negative_evidence("no_authentication_failure", "SPF and DKIM pass without alignment failure")
+
         available_tools = self.tool_registry.get_tool_definitions()
         permissions = ["email.parse", "threat_intel.query", "attachment.inspect", "sandbox.browser_execute", "network.dns_lookup", "telemetry.query"]
 
         # 3. Dynamic Planning & Re-Planning Loop
         while inv_state.remaining_budget_steps > 0:
-            decision = self.planner.propose_next_action(inv_state, available_tools, permissions)
+            decision = active_planner.propose_next_action(inv_state, available_tools, permissions)
             inv_state.decisions.append(decision)
             inv_state.remaining_budget_steps -= 1
 
@@ -236,18 +273,21 @@ class SecurityGraph:
                 out = res.output or {}
 
                 # Create evidence items from authentic execution
-                if tool_name in ["UnicodeAnalyzer"] and out.get("has_anomalies"):
-                    ev_item = StateEvidence(
-                        id=f"E-{e_idx}",
-                        evidence_type="UNICODE_ANOMALY",
-                        value="Unicode Tag characters or RTLO override detected in payload",
-                        source="UnicodeAnalyzer",
-                        status="OBSERVED"
-                    )
-                    inv_state.evidence[ev_item.id] = ev_item
-                    produced_e_ids.append(ev_item.id)
-                    state.setdefault("evidence", []).append({"stage": "EMAIL_ANALYSIS", "type": "UNICODE_RTLO", "detail": "Unicode tag characters detected"})
-                    e_idx += 1
+                if tool_name in ["UnicodeAnalyzer"]:
+                    if out.get("has_anomalies"):
+                        ev_item = StateEvidence(
+                            id=f"E-{e_idx}",
+                            evidence_type="UNICODE_ANOMALY",
+                            value="Unicode Tag characters or RTLO override detected in payload",
+                            source="UnicodeAnalyzer",
+                            status="OBSERVED"
+                        )
+                        inv_state.evidence[ev_item.id] = ev_item
+                        produced_e_ids.append(ev_item.id)
+                        state.setdefault("evidence", []).append({"stage": "EMAIL_ANALYSIS", "type": "UNICODE_RTLO", "detail": "Unicode tag characters detected"})
+                        e_idx += 1
+                    else:
+                        inv_state.add_negative_evidence("no_suspicious_unicode", "UnicodeAnalyzer confirmed absence of tags or RTLO characters")
 
                 elif tool_name in ["threat_intel_lookup", "ThreatIntelFeeds"]:
                     is_mal = bool(out.get("is_malicious", False))
@@ -270,6 +310,10 @@ class SecurityGraph:
                     produced_e_ids.append(ev_item.id)
                     if is_mal:
                         state.setdefault("evidence", []).append({"stage": "THREAT_INTEL", "type": "DECEPTIVE_URL", "detail": "Deceptive link flagged in reputation feed"})
+                        if not auth_failed:
+                            inv_state.add_contradiction("Legitimate sender authentication combined with verified malicious URL target", [ev_auth.id, ev_item.id], impact="HIGH")
+                    else:
+                        inv_state.add_negative_evidence("no_known_malicious_reputation", f"Threat intel reported benign/unknown reputation for {target_url}")
                     e_idx += 1
 
                 elif tool_name in ["url_sandbox_detonation", "UrlSandboxRunner"]:
@@ -304,6 +348,10 @@ class SecurityGraph:
                             state.setdefault("evidence", []).append({"stage": "SANDBOX_BEHAVIOR", "type": "RENDERING_EXPLOIT", "detail": anom})
                         for fc in sb_tel.forced_callout_destinations:
                             state.setdefault("evidence", []).append({"stage": "SANDBOX_BEHAVIOR", "type": "FORCED_CALLOUT", "detail": f"Forced UNC/SMB to {fc}"})
+                        # Check contradiction against threat intel reputation
+                        rep_ev = inv_state.get_latest_evidence("URL_REPUTATION", subject=target_url)
+                        if rep_ev and "MALICIOUS" not in rep_ev.value.upper():
+                            inv_state.add_contradiction("Clean threat intel reputation contradicted by dynamic sandbox exploit observation", [rep_ev.id, ev_item.id], impact="CRITICAL")
                     e_idx += 1
 
                 elif tool_name in ["inspect_attachment", "AttachmentAnalyzer"]:
@@ -342,5 +390,8 @@ class SecurityGraph:
                 )
                 inv_state.executed_tools.append(exec_record)
 
+        state["planner_requested"] = inv_state.planner_requested
+        state["planner_used"] = inv_state.planner_used
+        state["fallback_reason"] = inv_state.fallback_reason
         state["investigation_state"] = inv_state
         return state

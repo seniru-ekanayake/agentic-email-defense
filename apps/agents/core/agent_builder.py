@@ -37,6 +37,12 @@ class AgentConfig(BaseModel):
         "SPF/DMARC status", "Unicode Tag verification", "DNS resolve status"
     ])
     response_permission: ResponsePermission = ResponsePermission.RECOMMEND
+    planner_mode: str = "HYBRID"  # RULE, LLM, HYBRID, AUTO
+    hybrid_arbitration_policy: str = "RULE_FIRST"  # RULE_FIRST, CONSENSUS_REQUIRED, EVIDENCE_WEIGHTED, INFORMATION_GAIN_WEIGHTED, SAFETY_FIRST
+    max_llm_calls: int = 10
+    max_llm_tokens: int = 8000
+    max_replanning_cycles: int = 5
+    tier_thresholds: Dict[str, float] = Field(default_factory=lambda: {"tier1_rule_max_risk": 30.0, "tier3_llm_min_risk": 70.0})
     active: bool = True
     created_at: str = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
 

@@ -68,19 +68,49 @@ class ToolExecution(BaseModel):
     timestamp: str = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
 
 
+class LLMDecisionProposal(BaseModel):
+    """Strict structured proposal schema for LLM-driven planning decisions."""
+    decision: str = Field(description="Must be RUN_TOOL, STOP, or ESCALATE")
+    tool: Optional[str] = Field(default=None, description="Must match registered tool name exactly")
+    arguments: Dict[str, Any] = Field(default_factory=dict, description="Typed parameters for tool execution")
+    question_id: Optional[str] = Field(default=None, description="The security question addressed (e.g. Q-01, Q-02, Q-03)")
+    evidence_ids: List[str] = Field(default_factory=list, description="IDs of observed evidence motivating this decision")
+    expected_information_gain: float = Field(default=0.5, ge=0.0, le=1.0, description="Estimated information gain (0.0 to 1.0)")
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0, description="Confidence in this decision (0.0 to 1.0)")
+    rationale_summary: str = Field(description="Concise operational rationale")
+    alternatives: List[Dict[str, str]] = Field(default_factory=list, description="Alternative tools considered and rejection reason")
+
+    model_config = {"extra": "forbid"}
+
+
 class PlannerDecision(BaseModel):
     decision_id: str = Field(default_factory=lambda: f"D-{uuid.uuid4().hex[:6].upper()}")
-    action: str  # RUN_TOOL, ASK_HUMAN, STOP
+    action: str  # RUN_TOOL, ASK_HUMAN, STOP, ESCALATE
     engine_type: str = "RULE_ENGINE"  # RULE_ENGINE, LLM_PLANNER, HYBRID
+    planner_type: str = "RULE"  # RULE, LLM, HYBRID
     tool_name: Optional[str] = None
+    selected_action: str = "STOP"
+    selected_tool: Optional[str] = None
+    tool_arguments: Dict[str, Any] = Field(default_factory=dict)
     rationale: str
+    rationale_summary: str = ""
+    question_id: Optional[str] = None
+    hypothesis_ids: List[str] = Field(default_factory=list)
     addresses_questions: List[str] = Field(default_factory=list)
     expected_information_gain: float = 0.0
     estimated_cost: float = 0.0
     confidence_before: float = 0.5
     confidence_after: float = 0.5
-    stop_reason: Optional[str] = None  # SUFFICIENT_EVIDENCE, NO_USEFUL_TOOLS, BUDGET_EXHAUSTED, DEPENDENCY_UNAVAILABLE, HUMAN_APPROVAL_REQUIRED, CONTRADICTORY_EVIDENCE, INSUFFICIENT_CONFIDENCE
+    confidence: float = 0.5
+    stop_reason: Optional[str] = None  # SUFFICIENT_EVIDENCE, NO_USEFUL_TOOLS, BUDGET_EXHAUSTED, DEPENDENCY_UNAVAILABLE, HUMAN_APPROVAL_REQUIRED, CONTRADICTORY_EVIDENCE, INSUFFICIENT_CONFIDENCE, RATE_LIMIT_REACHED, REPLANNING_LIMIT_REACHED
+    alternatives_considered: List[Dict[str, Any]] = Field(default_factory=list)
+    evidence_ids_used: List[str] = Field(default_factory=list)
+    policy_constraints: List[str] = Field(default_factory=list)
     arbitration: Optional[Dict[str, Any]] = None  # Documents Rule vs LLM proposals and consensus reasoning in Hybrid mode
+    model: Optional[str] = None
+    provider: Optional[str] = None
+    latency_ms: float = 0.0
+    tokens_used: int = 0
     timestamp: str = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
 
 
@@ -111,6 +141,7 @@ class InvestigationState(BaseModel):
     # Dynamic Planning State
     artifacts: List[Artifact] = Field(default_factory=list)
     evidence: Dict[str, Evidence] = Field(default_factory=dict)
+    negative_evidence: Dict[str, Any] = Field(default_factory=dict)
     hypotheses: Dict[str, Hypothesis] = Field(default_factory=dict)
     questions: Dict[str, Question] = Field(default_factory=dict)
     executed_tools: List[ToolExecution] = Field(default_factory=list)
@@ -121,12 +152,36 @@ class InvestigationState(BaseModel):
     remaining_budget_steps: int = 15
     start_time: float = Field(default_factory=time.time)
     max_duration_seconds: float = 30.0
+    llm_call_count: int = 0
+    llm_tokens_total: int = 0
+    replanning_cycle_count: int = 0
     
     # Engine Observability
     planner_engine: str = "RULE_ENGINE"
+    planner_requested: str = "RULE"
+    planner_used: str = "RULE"
+    fallback_reason: Optional[str] = None
     is_complete: bool = False
     stop_reason: Optional[str] = None
     verdict: Optional[Verdict] = None
+
+    def add_negative_evidence(self, indicator: str, detail: str = ""):
+        """Explicitly records the verified absence of a threat indicator."""
+        self.negative_evidence[indicator] = {
+            "absent": True,
+            "detail": detail,
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
+        }
+
+    def add_contradiction(self, description: str, conflicting_evidence_ids: List[str], impact: str = "MEDIUM") -> Contradiction:
+        """Records a conflict between observed evidence items."""
+        contra = Contradiction(
+            description=description,
+            conflicting_evidence_ids=conflicting_evidence_ids,
+            impact=impact
+        )
+        self.contradictions.append(contra)
+        return contra
 
     def get_latest_evidence(self, evidence_type: str, subject: Optional[str] = None) -> Optional[Evidence]:
         """
