@@ -45,7 +45,9 @@ from apps.agents.core.production_manager import ProductionManager, PlatformMode
 from apps.agents.core.security_principal import (
     AuthenticatedPrincipal,
     get_authenticated_principal,
-    resolve_authorized_tenant
+    resolve_authorized_tenant,
+    create_principal_token,
+    is_production_mode
 )
 
 app = FastAPI(
@@ -93,6 +95,18 @@ if os.path.exists("assets"):
 
 
 # ============================================================================
+# STARTUP VALIDATION GATE
+# ============================================================================
+
+@app.on_event("startup")
+async def startup_security_gate():
+    """Validates production security configuration on startup (fails closed)."""
+    from apps.agents.core.security_principal import get_jwt_secret_key, is_local_auth_fallback_enabled
+    get_jwt_secret_key()
+    is_local_auth_fallback_enabled()
+
+
+# ============================================================================
 # API ENDPOINTS
 # ============================================================================
 
@@ -104,20 +118,49 @@ async def get_platform_mode():
 
 @app.post("/api/v1/mode")
 async def set_platform_mode(request: Request):
-    """Switches platform mode."""
+    """Switches platform mode with authenticated principal verification."""
+    principal = get_authenticated_principal(request)
     body = await request.json()
     new_mode_str = body.get("mode", "PRODUCTION").upper()
     try:
         new_mode = PlatformMode(new_mode_str)
         prod_manager.set_mode(new_mode)
         record_audit_event(
-            actor="SOC_ADMIN",
+            actor=principal.subject_id,
             action="SET_PLATFORM_MODE",
             details={"mode": new_mode.value}
         )
         return JSONResponse(content=prod_manager.get_status_summary())
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid mode: {new_mode_str}")
+
+
+@app.post("/api/v1/auth/token")
+async def obtain_token(request: Request):
+    """
+    Issues a cryptographically signed JWT token.
+    In PRODUCTION: requires admin principal authorization to issue arbitrary identity tokens.
+    In DEVELOPMENT/TEST: allows issuing tokens for testing principals.
+    """
+    body = await request.json()
+    subject_id = body.get("subject_id", "analyst_alpha")
+    tenant_id = body.get("tenant_id", "tenant-enterprise-prod")
+    roles = body.get("roles", ["SOC_ANALYST"])
+
+    if is_production_mode():
+        # Require admin authentication to generate tokens
+        principal = get_authenticated_principal(request)
+        if not principal.has_role("ADMIN") and not principal.has_role("SOC_ADMIN"):
+            raise HTTPException(status_code=403, detail="Admin authorization required to issue tokens in production.")
+
+    token = create_principal_token(subject_id=subject_id, tenant_id=tenant_id, roles=roles)
+    return JSONResponse(content={
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_in": 86400,
+        "tenant_id": tenant_id,
+        "subject_id": subject_id
+    })
 
 
 @app.get("/api/v1/incidents")
@@ -231,9 +274,14 @@ async def stream_investigation_events(incident_id: str, request: Request):
 
 
 @app.post("/api/v1/investigations/{incident_id}/pause")
-async def pause_investigation(incident_id: str):
-    """Pauses an active investigation."""
-    inc = investigation_service.get_incident(incident_id)
+async def pause_investigation(incident_id: str, request: Request):
+    """Pauses an active investigation with tenant authorization."""
+    principal = get_authenticated_principal(request)
+    tenant_id = resolve_authorized_tenant(request, principal)
+    try:
+        inc = investigation_service.get_incident(incident_id, tenant_id=tenant_id)
+    except PermissionError as pe:
+        raise HTTPException(status_code=403, detail=str(pe))
     if not inc:
         raise HTTPException(status_code=404, detail="Investigation not found")
     event_manager.publish_event(
@@ -248,9 +296,14 @@ async def pause_investigation(incident_id: str):
 
 
 @app.post("/api/v1/investigations/{incident_id}/resume")
-async def resume_investigation(incident_id: str):
-    """Resumes a paused investigation."""
-    inc = investigation_service.get_incident(incident_id)
+async def resume_investigation(incident_id: str, request: Request):
+    """Resumes a paused investigation with tenant authorization."""
+    principal = get_authenticated_principal(request)
+    tenant_id = resolve_authorized_tenant(request, principal)
+    try:
+        inc = investigation_service.get_incident(incident_id, tenant_id=tenant_id)
+    except PermissionError as pe:
+        raise HTTPException(status_code=403, detail=str(pe))
     if not inc:
         raise HTTPException(status_code=404, detail="Investigation not found")
     event_manager.publish_event(
@@ -265,9 +318,14 @@ async def resume_investigation(incident_id: str):
 
 
 @app.post("/api/v1/investigations/{incident_id}/cancel")
-async def cancel_investigation(incident_id: str):
-    """Cancels an active investigation."""
-    inc = investigation_service.get_incident(incident_id)
+async def cancel_investigation(incident_id: str, request: Request):
+    """Cancels an active investigation with tenant authorization."""
+    principal = get_authenticated_principal(request)
+    tenant_id = resolve_authorized_tenant(request, principal)
+    try:
+        inc = investigation_service.get_incident(incident_id, tenant_id=tenant_id)
+    except PermissionError as pe:
+        raise HTTPException(status_code=403, detail=str(pe))
     if not inc:
         raise HTTPException(status_code=404, detail="Investigation not found")
     event_manager.publish_event(
@@ -282,21 +340,38 @@ async def cancel_investigation(incident_id: str):
 
 
 @app.post("/api/v1/investigations/{incident_id}/replay")
-async def replay_investigation(incident_id: str):
-    """Returns recorded execution events for zero-distortion historical replay."""
+async def replay_investigation(incident_id: str, request: Request):
+    """Returns recorded execution events for zero-distortion historical replay with tenant authorization."""
+    principal = get_authenticated_principal(request)
+    tenant_id = resolve_authorized_tenant(request, principal)
+    try:
+        inc = investigation_service.get_incident(incident_id, tenant_id=tenant_id)
+    except PermissionError as pe:
+        raise HTTPException(status_code=403, detail=str(pe))
+    if not inc:
+        raise HTTPException(status_code=404, detail="Investigation not found")
     events = event_manager.get_events(incident_id)
     if not events:
-        inc = investigation_service.get_incident(incident_id)
         if inc and inc.events:
             events = inc.events
     return JSONResponse(content=[e.model_dump() for e in events])
 
 
 @app.get("/api/v1/investigations/compare")
-async def compare_investigations(id_a: str, id_b: str):
-    """Fulfills Requirement 13: Side-by-side comparison of two investigations."""
-    inc_a = investigation_service.get_incident(id_a) or next((i for i in incidents_db if i["incident_id"] == id_a), None)
-    inc_b = investigation_service.get_incident(id_b) or next((i for i in incidents_db if i["incident_id"] == id_b), None)
+async def compare_investigations(id_a: str, id_b: str, request: Request):
+    """Fulfills Requirement 13: Side-by-side comparison of two investigations with tenant authorization."""
+    principal = get_authenticated_principal(request)
+    tenant_id = resolve_authorized_tenant(request, principal)
+    try:
+        inc_a = investigation_service.get_incident(id_a, tenant_id=tenant_id)
+        inc_b = investigation_service.get_incident(id_b, tenant_id=tenant_id)
+    except PermissionError as pe:
+        raise HTTPException(status_code=403, detail=str(pe))
+
+    if not inc_a:
+        inc_a = next((i for i in incidents_db if i["incident_id"] == id_a and i.get("tenant_id") == tenant_id), None)
+    if not inc_b:
+        inc_b = next((i for i in incidents_db if i["incident_id"] == id_b and i.get("tenant_id") == tenant_id), None)
 
     if not inc_a or not inc_b:
         raise HTTPException(status_code=404, detail="One or both investigations could not be found.")
@@ -335,19 +410,22 @@ async def compare_investigations(id_a: str, id_b: str):
 
 
 @app.get("/api/v1/integrations")
-async def list_integrations():
-    """Requirement 2: Zero-Code Integration Center."""
+async def list_integrations(request: Request):
+    """Requirement 2: Zero-Code Integration Center with principal authentication."""
+    principal = get_authenticated_principal(request)
     return JSONResponse(content=integration_manager.list_integrations())
 
 
 @app.post("/api/v1/integrations/{integration_id}")
 async def update_integration(integration_id: str, request: Request):
-    """Updates integration parameters and runs immediate live health verification."""
+    """Updates integration parameters and runs immediate live health verification with authentication."""
+    principal = get_authenticated_principal(request)
     body = await request.json()
     enabled = body.get("enabled", True)
     config = body.get("config", {})
+    rec = integration_manager.configure_integration(integration_id, enabled, config)
     record_audit_event(
-        actor="SOC_ADMIN",
+        actor=principal.subject_id,
         action="CONFIGURED_INTEGRATION",
         details={
             "integration_id": integration_id,
@@ -358,21 +436,24 @@ async def update_integration(integration_id: str, request: Request):
 
 
 @app.post("/api/v1/integrations/{integration_id}/health")
-async def test_integration_health(integration_id: str):
-    """Executes a real TCP/DNS/HTTP probe against the configured integration."""
+async def test_integration_health(integration_id: str, request: Request):
+    """Executes a real TCP/DNS/HTTP probe against the configured integration with authentication."""
+    principal = get_authenticated_principal(request)
     rec = integration_manager.test_health(integration_id)
     return JSONResponse(content=rec.model_dump())
 
 
 @app.get("/api/v1/agent-config")
-async def get_agent_configs():
-    """Requirement 3: Zero-Code Agent Builder."""
+async def get_agent_configs(request: Request):
+    """Requirement 3: Zero-Code Agent Builder with authentication."""
+    principal = get_authenticated_principal(request)
     return JSONResponse(content=[a.model_dump() for a in zerocode_store.list_agents()])
 
 
 @app.post("/api/v1/agent-config")
 async def save_agent_config(request: Request):
-    """Saves visual agent configuration."""
+    """Saves visual agent configuration with authentication."""
+    principal = get_authenticated_principal(request)
     body = await request.json()
     cfg = AgentConfig(**body)
     saved = zerocode_store.save_agent(cfg)
@@ -380,14 +461,16 @@ async def save_agent_config(request: Request):
 
 
 @app.get("/api/v1/detection-rules")
-async def list_detection_rules():
-    """Requirement 18: Zero-Code Detection Rule Builder."""
+async def list_detection_rules(request: Request):
+    """Requirement 18: Zero-Code Detection Rule Builder with authentication."""
+    principal = get_authenticated_principal(request)
     return JSONResponse(content=[r.model_dump() for r in zerocode_store.list_rules()])
 
 
 @app.post("/api/v1/detection-rules")
 async def save_detection_rule(request: Request):
-    """Saves visual WHEN/AND/THEN rule."""
+    """Saves visual WHEN/AND/THEN rule with authentication."""
+    principal = get_authenticated_principal(request)
     body = await request.json()
     rule = DetectionRule(**body)
     saved = zerocode_store.save_rule(rule)
@@ -395,14 +478,16 @@ async def save_detection_rule(request: Request):
 
 
 @app.get("/api/v1/workflows")
-async def list_workflows():
-    """Requirement 19: Zero-Code Investigation Workflow Builder."""
+async def list_workflows(request: Request):
+    """Requirement 19: Zero-Code Investigation Workflow Builder with authentication."""
+    principal = get_authenticated_principal(request)
     return JSONResponse(content=[w.model_dump() for w in zerocode_store.list_workflows()])
 
 
 @app.post("/api/v1/workflows")
 async def save_workflow(request: Request):
-    """Saves visual node workflow canvas."""
+    """Saves visual node workflow canvas with authentication."""
+    principal = get_authenticated_principal(request)
     body = await request.json()
     wf = InvestigationWorkflow(**body)
     saved = zerocode_store.save_workflow(wf)
@@ -434,14 +519,16 @@ async def get_system_health():
 
 
 @app.get("/api/v1/trust-score")
-async def get_agent_trust_score():
-    """Requirement 29: Agent Trust Score metric."""
-    if incidents_db:
-        latest = incidents_db[0]
+async def get_agent_trust_score(request: Request):
+    """Requirement 29: Agent Trust Score metric with tenant authorization."""
+    principal = get_authenticated_principal(request)
+    tenant_id = resolve_authorized_tenant(request, principal)
+    tenant_incidents = [i for i in incidents_db if i.get("tenant_id") == tenant_id]
+    if tenant_incidents:
+        latest = tenant_incidents[0]
         ts = latest.get("trust_score")
         if ts:
             return JSONResponse(content=ts)
-    # Default baseline trust score
     calc = TrustScoreCalculator.calculate(12, [{"claim": "Baseline"}], [{"tool": "MimeParser"}], [{"decision": "Parse"}], 3)
     return JSONResponse(content=calc.model_dump())
 
@@ -556,12 +643,18 @@ async def request_more_investigation(token: str, request: Request):
 
 
 @app.get("/api/v1/audit-logs")
-async def get_audit_logs():
-    """Returns permanent immutable audit logs backed by durable SQLite storage."""
+async def get_audit_logs(request: Request):
+    """Returns permanent immutable audit logs backed by durable SQLite storage, scoped to authorized tenant."""
+    principal = get_authenticated_principal(request)
+    tenant_id = resolve_authorized_tenant(request, principal)
     durable_logs = investigation_service.durable_storage.get_audit_logs()
-    if durable_logs:
-        return JSONResponse(content=durable_logs)
-    return JSONResponse(content=audit_log_store)
+    source_logs = durable_logs if durable_logs else audit_log_store
+    tenant_logs = [
+        l for l in source_logs
+        if l.get("tenant_id") == tenant_id or
+           (isinstance(l.get("details"), dict) and l["details"].get("tenant_id") == tenant_id)
+    ]
+    return JSONResponse(content=tenant_logs)
 
 
 @app.get("/api/v1/demo")

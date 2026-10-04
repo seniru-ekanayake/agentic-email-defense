@@ -1,13 +1,27 @@
 """
 Tenant Security Regression Suite
-Tests A - G covering tenant isolation, cross-tenant 403 enforcement, empty tenant returns [], and detail isolation.
+Tests A - E covering tenant isolation, cross-tenant 403 enforcement, empty tenant returns [],
+and detail isolation with cryptographically authenticated JWT identities.
 """
+import os
 import urllib.request
 import urllib.error
 import json
 import sys
 
+# Ensure production secret is set for token signing
+SECRET_KEY = os.environ.get(
+    "FISHINGMAILS_AUTH_SECRET",
+    "fishingmails-prod-enterprise-agentic-jwt-signing-key-32bytes-min"
+)
+os.environ["FISHINGMAILS_AUTH_SECRET"] = SECRET_KEY
+
+from apps.agents.core.security_principal import create_principal_token
+
 BASE_URL = "http://127.0.0.1:8000"
+
+def get_headers(token: str):
+    return {"Authorization": f"Bearer {token}"}
 
 def run_test(name, fn):
     try:
@@ -20,21 +34,25 @@ def run_test(name, fn):
 
 def test_a_empty_tenant_list():
     # Test A: Unseen tenant with zero records returns [] (not fallback incidents_db)
-    req = urllib.request.Request(f"{BASE_URL}/api/v1/incidents?tenant_id=tenant-empty-test-999")
+    token = create_principal_token("empty_analyst_1", "tenant-empty-test-999")
+    req = urllib.request.Request(f"{BASE_URL}/api/v1/incidents", headers=get_headers(token))
     with urllib.request.urlopen(req) as resp:
         data = json.loads(resp.read().decode("utf-8"))
         assert data == [], f"Expected empty list [], got {len(data)} items: {data}"
 
 def test_b_empty_tenant_header():
-    # Test B: Unseen tenant via header returns []
-    req = urllib.request.Request(f"{BASE_URL}/api/v1/incidents", headers={"X-Tenant-ID": "tenant-empty-header-888"})
+    # Test B: Unseen tenant via matching header returns []
+    token = create_principal_token("empty_analyst_2", "tenant-empty-header-888")
+    headers = {**get_headers(token), "X-Tenant-ID": "tenant-empty-header-888"}
+    req = urllib.request.Request(f"{BASE_URL}/api/v1/incidents", headers=headers)
     with urllib.request.urlopen(req) as resp:
         data = json.loads(resp.read().decode("utf-8"))
         assert data == [], f"Expected empty list [], got {len(data)} items"
 
 def test_c_existing_tenant_isolation():
     # Test C: Retrieve incidents for primary tenant
-    req = urllib.request.Request(f"{BASE_URL}/api/v1/incidents?tenant_id=tenant-enterprise-prod")
+    token = create_principal_token("analyst_alpha", "tenant-enterprise-prod")
+    req = urllib.request.Request(f"{BASE_URL}/api/v1/incidents", headers=get_headers(token))
     with urllib.request.urlopen(req) as resp:
         data = json.loads(resp.read().decode("utf-8"))
         assert isinstance(data, list)
@@ -42,9 +60,9 @@ def test_c_existing_tenant_isolation():
             assert inc.get("tenant_id") == "tenant-enterprise-prod", f"Cross-tenant record leaked: {inc.get('tenant_id')}"
 
 def test_d_cross_tenant_detail_rejection():
-    # Test D: Fetch incident belonging to tenant-enterprise-prod using a different tenant_id
-    # First get a valid incident id
-    req = urllib.request.Request(f"{BASE_URL}/api/v1/incidents?tenant_id=tenant-enterprise-prod")
+    # Test D: Fetch incident belonging to tenant-enterprise-prod using a rogue tenant token
+    token_prod = create_principal_token("analyst_alpha", "tenant-enterprise-prod")
+    req = urllib.request.Request(f"{BASE_URL}/api/v1/incidents", headers=get_headers(token_prod))
     with urllib.request.urlopen(req) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     
@@ -53,8 +71,12 @@ def test_d_cross_tenant_detail_rejection():
         return
 
     target_id = data[0]["incident_id"]
-    # Now attempt access with rogue tenant
-    req_rogue = urllib.request.Request(f"{BASE_URL}/api/v1/incidents/{target_id}?tenant_id=tenant-rogue-attacker")
+    # Now attempt access with rogue tenant identity
+    token_rogue = create_principal_token("adversary_user", "tenant-rogue-attacker")
+    req_rogue = urllib.request.Request(
+        f"{BASE_URL}/api/v1/incidents/{target_id}",
+        headers=get_headers(token_rogue)
+    )
     try:
         urllib.request.urlopen(req_rogue)
         assert False, "Expected 403 Forbidden on cross-tenant detail access, but request succeeded!"
@@ -62,8 +84,9 @@ def test_d_cross_tenant_detail_rejection():
         assert he.code == 403, f"Expected 403 Forbidden, got {he.code}"
 
 def test_e_agent_config_active():
-    # Test E: Verify AgentConfig defaults to LLM_FIRST
-    req = urllib.request.Request(f"{BASE_URL}/api/v1/agent-config")
+    # Test E: Verify AgentConfig defaults to LLM_FIRST with authenticated principal
+    token = create_principal_token("analyst_alpha", "tenant-enterprise-prod")
+    req = urllib.request.Request(f"{BASE_URL}/api/v1/agent-config", headers=get_headers(token))
     with urllib.request.urlopen(req) as resp:
         data = json.loads(resp.read().decode("utf-8"))
         assert len(data) > 0, "No agent configs found"
