@@ -32,6 +32,7 @@ from apps.agents.core.investigation_planner import (
     select_planner
 )
 from apps.agents.core.tool_registry import ToolRegistry
+from apps.agents.core.event_system import EventStreamManager
 
 logger = logging.getLogger("SecurityGraph")
 
@@ -228,11 +229,38 @@ class SecurityGraph:
         available_tools = self.tool_registry.get_tool_definitions()
         permissions = ["email.parse", "threat_intel.query", "attachment.inspect", "sandbox.browser_execute", "network.dns_lookup", "telemetry.query"]
 
+        event_manager = EventStreamManager.get_instance()
+        incident_id = state.get("incident_id") or workflow_id
+        agent_run_id = state.get("agent_run_id") or f"run-{uuid.uuid4().hex[:8]}"
+
         # 3. Dynamic Planning & Re-Planning Loop
         while inv_state.remaining_budget_steps > 0:
             decision = active_planner.propose_next_action(inv_state, available_tools, permissions)
             inv_state.decisions.append(decision)
             inv_state.remaining_budget_steps -= 1
+
+            # Emit real-time granular SSE telemetry for planner selection
+            try:
+                event_manager.publish_event(
+                    investigation_id=incident_id,
+                    agent_run_id=agent_run_id,
+                    event_type="agent.planner.selected",
+                    message=f"Planner ({decision.planner_type}) selected action: {decision.action} ({decision.tool_name or decision.stop_reason or ''})",
+                    status="SUCCESS",
+                    decision_id=decision.decision_id,
+                    tool=decision.tool_name,
+                    data={
+                        "planner_type": decision.planner_type,
+                        "engine_type": decision.engine_type,
+                        "action": decision.action,
+                        "tool": decision.tool_name,
+                        "arbitration": decision.arbitration,
+                        "expected_gain": decision.expected_information_gain,
+                        "confidence": decision.confidence
+                    }
+                )
+            except Exception:
+                pass
 
             if decision.action == "STOP":
                 inv_state.is_complete = True
@@ -259,7 +287,7 @@ class SecurityGraph:
                     tool_params = {"domain": sender_dom}
                 elif tool_name in ["query_sender_history"]:
                     sender_dom = email_rep_dict.get("sender", {}).get("domain", "mail.net")
-                    tool_params = {"sender_email": sender_addr, "recipient_email": recipient_addr, "sender_domain": sender_dom}
+                    tool_params = {"sender_email": sender_addr, "recipient_email": recipient_addr, "sender_domain": sender_dom, "tenant_id": tenant_id}
                 elif tool_name in ["CisaKevCorrelator"]:
                     tool_params = {"cve_id": "CVE-2023-35636"}
 
@@ -377,7 +405,32 @@ class SecurityGraph:
                         inv_state.evidence[ev_motw.id] = ev_motw
                         produced_e_ids.append(ev_motw.id)
                         state.setdefault("evidence", []).append({"stage": "ATTACHMENT_INSPECTION", "type": "MOTW_EVASION", "detail": "Container embeds executable payload"})
-                        e_idx += 1
+                elif tool_name == "query_sender_history":
+                    is_first = out.get("is_first_time_sender", True)
+                    ev_item = StateEvidence(
+                        id=f"E-{e_idx}",
+                        evidence_type="HISTORICAL_COMMUNICATION",
+                        value=f"Sender history: first-time sender={is_first}, count={out.get('historical_email_count', 0)}, reputation={out.get('baseline_reputation', 'UNKNOWN')}",
+                        source="TelemetryServer",
+                        status="OBSERVED",
+                        metadata=out
+                    )
+                    inv_state.evidence[ev_item.id] = ev_item
+                    produced_e_ids.append(ev_item.id)
+                    e_idx += 1
+
+                elif tool_name == "dns_spf_dmarc_recon":
+                    ev_item = StateEvidence(
+                        id=f"E-{e_idx}",
+                        evidence_type="DNS_RECON",
+                        value=f"DNS recon: SPF={out.get('has_spf')}, DMARC={out.get('has_dmarc')}, vulnerable={out.get('is_spoofing_vulnerable')}",
+                        source="DnsServer",
+                        status="OBSERVED",
+                        metadata=out
+                    )
+                    inv_state.evidence[ev_item.id] = ev_item
+                    produced_e_ids.append(ev_item.id)
+                    e_idx += 1
 
                 exec_record = StateToolExecution(
                     tool_name=tool_name,
@@ -389,6 +442,36 @@ class SecurityGraph:
                     produced_evidence_ids=produced_e_ids
                 )
                 inv_state.executed_tools.append(exec_record)
+
+                # Emit real-time granular SSE telemetry for tool execution & evidence created
+                try:
+                    event_manager.publish_event(
+                        investigation_id=incident_id,
+                        agent_run_id=agent_run_id,
+                        event_type="agent.tool.executed",
+                        message=f"Executed tool {tool_name} in {dur_ms}ms ({'COMPLETED' if res.success else 'FAILED'})",
+                        status="SUCCESS" if res.success else "FAILED",
+                        tool=tool_name,
+                        duration=dur_ms / 1000.0,
+                        evidence_ids=produced_e_ids,
+                        error=res.error,
+                        data={"output_summary": str(out)[:200], "duration_ms": dur_ms}
+                    )
+                    for eid in produced_e_ids:
+                        ev_obj = inv_state.evidence.get(eid)
+                        if ev_obj:
+                            event_manager.publish_event(
+                                investigation_id=incident_id,
+                                agent_run_id=agent_run_id,
+                                event_type="agent.evidence.created",
+                                message=f"Generated evidence {eid}: {ev_obj.evidence_type} ({ev_obj.source})",
+                                status="SUCCESS",
+                                tool=tool_name,
+                                evidence_ids=[eid],
+                                data={"evidence_id": eid, "type": ev_obj.evidence_type, "value": ev_obj.value}
+                            )
+                except Exception:
+                    pass
 
         state["planner_requested"] = inv_state.planner_requested
         state["planner_used"] = inv_state.planner_used

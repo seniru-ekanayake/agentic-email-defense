@@ -172,84 +172,82 @@ class OpenRouterProvider(LLMProvider):
 
         t0 = time.time()
         try:
-            req = urllib.request.Request(
+            import requests
+            resp = requests.post(
                 f"{self.base_url}/chat/completions",
-                data=json.dumps(payload).encode("utf-8"),
+                json=payload,
                 headers={
                     "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                     "HTTP-Referer": "https://github.com/agentic-email-sec",
                     "X-Title": "Agentic Email Security Platform"
                 },
-                method="POST"
+                timeout=(5.0, 20.0)
             )
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                t1 = time.time()
-                latency_ms = round((t1 - t0) * 1000.0, 2)
-                res_data = json.loads(resp.read().decode())
-                choice = res_data["choices"][0]["message"]
-                usage = res_data.get("usage", {})
-                
-                content = choice.get("content")
-                tool_calls = choice.get("tool_calls")
-                structured_json = None
-                
-                if response_schema and content:
-                    try:
-                        structured_json = json.loads(content)
-                    except json.JSONDecodeError:
-                        logger.warning("Strict json.loads failed on LLM output. Attempting regex markdown extraction fallback...")
-                        import re
-                        match = re.search(r"(\{.*\}|\[.*\])", content, re.DOTALL)
-                        if match:
-                            try:
-                                structured_json = json.loads(match.group(0))
-                            except Exception:
-                                logger.error("Regex extraction also failed to parse JSON from LLM content.")
-                        else:
-                            logger.error("Failed to parse expected JSON output from LLM.")
-                
+            t1 = time.time()
+            latency_ms = round((t1 - t0) * 1000.0, 2)
+
+            if resp.status_code != 200:
+                logger.error(f"OpenRouter HTTP {resp.status_code} error: {resp.text}")
+                if target_model != "openrouter/free":
+                    logger.info("Attempting graceful fallback to 'openrouter/free'...")
+                    return self.generate(
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
+                        model_id="openrouter/free",
+                        tools=tools,
+                        response_schema=response_schema,
+                        temperature=temperature
+                    )
                 return LLMResponse(
-                    content=content,
-                    tool_calls=tool_calls,
-                    structured_json=structured_json,
+                    content="",
                     model_used=target_model,
-                    status="COMPLETED",
+                    status="FAILED",
                     actual_call=True,
                     engine_type="LLM",
-                    tokens_prompt=usage.get("prompt_tokens", 0),
-                    tokens_completion=usage.get("completion_tokens", 0),
                     latency_ms=latency_ms
                 )
 
-        except urllib.error.HTTPError as e:
-            t1 = time.time()
-            latency_ms = round((t1 - t0) * 1000.0, 2)
-            err_body = e.read().decode()
-            logger.error(f"OpenRouter HTTP {e.code} error: {err_body}")
-            # Fallback if primary model failed and not already using openrouter/free
-            if target_model != "openrouter/free":
-                logger.info("Attempting graceful fallback to 'openrouter/free'...")
-                return self.generate(
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    model_id="openrouter/free",
-                    tools=tools,
-                    response_schema=response_schema,
-                    temperature=temperature
-                )
+            res_data = resp.json()
+            choice = res_data["choices"][0]["message"]
+            usage = res_data.get("usage", {})
+
+            content = choice.get("content")
+            tool_calls = choice.get("tool_calls")
+            structured_json = None
+
+            if response_schema and content:
+                try:
+                    structured_json = json.loads(content)
+                except json.JSONDecodeError:
+                    logger.warning("Strict json.loads failed on LLM output. Attempting regex markdown extraction fallback...")
+                    import re
+                    match = re.search(r"(\{.*\}|\[.*\])", content, re.DOTALL)
+                    if match:
+                        try:
+                            structured_json = json.loads(match.group(0))
+                        except Exception:
+                            logger.error("Regex extraction also failed to parse JSON from LLM content.")
+                    else:
+                        logger.error("Failed to parse expected JSON output from LLM.")
+
             return LLMResponse(
-                content="",
+                content=content,
+                tool_calls=tool_calls,
+                structured_json=structured_json,
                 model_used=target_model,
-                status="FAILED",
+                status="COMPLETED",
                 actual_call=True,
                 engine_type="LLM",
+                tokens_prompt=usage.get("prompt_tokens", 0),
+                tokens_completion=usage.get("completion_tokens", 0),
                 latency_ms=latency_ms
             )
+
         except Exception as e:
             t1 = time.time()
             latency_ms = round((t1 - t0) * 1000.0, 2)
-            logger.error(f"Unexpected error in OpenRouterProvider: {e}")
+            logger.error(f"Error in OpenRouterProvider request: {e}")
             return LLMResponse(
                 content="",
                 model_used=target_model,

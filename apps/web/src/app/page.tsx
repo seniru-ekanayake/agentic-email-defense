@@ -1,351 +1,264 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
-import { AgentLiveStreamVisualizer, StreamEvent } from '@/components/AgentLiveStreamVisualizer';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import {
+  ComprehensiveIncidentRecord,
+  AgentLifecycleEvent,
+  PendingApproval,
+  SystemHealthResponse,
+  TrustScore,
+} from '@/lib/api/types';
+import {
+  listIncidents,
+  getIncident,
+  investigateEmail,
+  getSystemHealth,
+  getTrustScore,
+  getPlatformMode,
+} from '@/lib/api/incidents';
+import { subscribeInvestigationEvents } from '@/lib/api/events';
+import { AgentLiveStreamVisualizer } from '@/components/AgentLiveStreamVisualizer';
 import { AttackGraphVisualizer } from '@/components/AttackGraphVisualizer';
 import { IncidentDetailModal } from '@/components/IncidentDetailModal';
-import { HumanApprovalModal, PendingActionProposal } from '@/components/HumanApprovalModal';
+import { HumanApprovalModal } from '@/components/HumanApprovalModal';
 import { ExposureView } from '@/components/ExposureView';
-
-interface IncidentItem {
-  incident_id: string;
-  sender: string;
-  recipient: string;
-  subject: string;
-  verdict: 'Malicious' | 'Suspicious' | 'Benign';
-  confidence: number;
-  threat_category: string;
-  agents_path: string;
-  timestamp: string;
-  title: string;
-  severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
-  overall_risk_score: number;
-  target_identity: string;
-  mail_platform: string;
-  exposure_status: string;
-  interaction_required: string;
-  cve?: string;
-  evidence_summary: string[];
-  mitre_techniques: { id: string; name: string; tactic: string }[];
-  attack_chain: { step: number; node: string; type: string }[];
-  recommended_actions: { name: string; risk: string; automated: boolean; requires_approval?: boolean }[];
-}
 
 export default function DashboardPage() {
   const [activeNav, setActiveNav] = useState<'overview' | 'stream' | 'triage' | 'graph' | 'surface' | 'governance'>('overview');
-  const [selectedIncident, setSelectedIncident] = useState<IncidentItem | null>(null);
+  
+  // Authoritative State from Backend
+  const [incidentList, setIncidentList] = useState<ComprehensiveIncidentRecord[]>([]);
+  const [selectedIncident, setSelectedIncident] = useState<ComprehensiveIncidentRecord | null>(null);
+  const [activeProposal, setActiveProposal] = useState<(PendingApproval & { target_identity?: string; incident_id?: string }) | null>(null);
   const [approvalModalOpen, setApprovalModalOpen] = useState(false);
-  const [activeProposal, setActiveProposal] = useState<PendingActionProposal | null>(null);
-  const [investigationDrawerOpen, setInvestigationDrawerOpen] = useState(false);
+  const [systemHealth, setSystemHealth] = useState<SystemHealthResponse | null>(null);
+  const [trustScore, setTrustScore] = useState<TrustScore | null>(null);
+  const [platformMode, setPlatformMode] = useState<string>('PRODUCTION');
+
+  // Loading & Error States
+  const [loading, setLoading] = useState<boolean>(true);
+  const [backendError, setBackendError] = useState<string | null>(null);
+  const [tenantId, setTenantId] = useState<string>('tenant-enterprise-prod');
+
+  // Search & Filtering
   const [searchFilter, setSearchFilter] = useState('');
   const [severityFilter, setSeverityFilter] = useState<'ALL' | 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'>('ALL');
 
   // Live SSE Stream Events
-  const [events, setEvents] = useState<StreamEvent[]>([]);
-  const [isStreaming, setIsStreaming] = useState(false);
+  const [events, setEvents] = useState<AgentLifecycleEvent[]>([]);
+  const [isStreaming, setIsStreaming] = useState<boolean>(false);
+  const [activeStreamingIncidentId, setActiveStreamingIncidentId] = useState<string | null>(null);
+  const [uploadLoading, setUploadLoading] = useState<boolean>(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const sseUnsubscribeRef = useRef<(() => void) | null>(null);
 
-  // Dynamic Incident Ledger
-  const [incidentList, setIncidentList] = useState<IncidentItem[]>([
-    {
-      incident_id: 'INC-849201',
-      sender: 'accounts@micros0ft-support.com',
-      recipient: 'cfo@enterprise-corp.internal',
-      subject: 'Urgent: Security patch verification required for Exchange OWA',
-      verdict: 'Malicious',
-      confidence: 0.998,
-      threat_category: 'Zero-Click MonikerLink',
-      agents_path: '6 nodes',
-      timestamp: '2m ago',
-      title: 'Outlook Moniker Link Forced NTLM Relay (CVE-2024-21413)',
-      severity: 'CRITICAL',
-      overall_risk_score: 96.8,
-      target_identity: 'cfo@enterprise-corp.internal (VIP)',
-      mail_platform: 'Microsoft Exchange / OWA 15.1.2507.17',
-      exposure_status: 'KNOWN_EXPLOITABLE',
-      interaction_required: 'VIEW (Zero-Click Preview Pane)',
-      cve: 'CVE-2024-21413',
-      evidence_summary: [
-        'Detected search-ms moniker link bypass (CVE-2024-21413) forcing NTLM hash relay over outbound SMB port 445.',
-        'Sender domain micros0ft-support.com failed SPF (-all) and DMARC (p=reject).',
-        'Payload contains deceptive URI schema with Unicode Right-to-Left Override (RTLO).',
-        'Target mailbox belongs to Tier-0 VIP Identity (Chief Financial Officer).',
-      ],
-      mitre_techniques: [
-        { id: 'T1566.002', name: 'Spearphishing Link', tactic: 'Initial Access' },
-        { id: 'T1204.001', name: 'Malicious Link', tactic: 'Execution' },
-        { id: 'T1187', name: 'Forced Authentication', tactic: 'Credential Access' },
-      ],
-      attack_chain: [
-        { step: 1, node: 'ThreatActor (FIN7)', type: 'actor' },
-        { step: 2, node: 'Campaign (Operation Blindside)', type: 'campaign' },
-        { step: 3, node: 'EmailMessage (CVE-2024-21413)', type: 'email' },
-        { step: 4, node: 'Vulnerability (CVE-2024-21413)', type: 'cve' },
-        { step: 5, node: 'Asset (Exchange OWA 15.1)', type: 'asset' },
-        { step: 6, node: 'Identity (cfo@enterprise-corp.internal)', type: 'identity' },
-      ],
-      recommended_actions: [
-        { name: 'Quarantine Email', risk: 'MEDIUM', automated: true },
-        { name: 'Revoke Active Webmail Session', risk: 'HIGH', automated: false, requires_approval: true },
-        { name: 'Block IP on Edge Firewall', risk: 'HIGH', automated: false, requires_approval: true },
-      ],
-    },
-    {
-      incident_id: 'INC-849195',
-      sender: 'david@partner-payments.co',
-      recipient: 'finance-lead@enterprise-corp.internal',
-      subject: 'Updated routing number & payment confirmation #48291',
-      verdict: 'Suspicious',
-      confidence: 0.941,
-      threat_category: 'Polymorphic BEC Wire Fraud',
-      agents_path: '5 nodes',
-      timestamp: '11m ago',
-      title: 'Polymorphic BEC Wire Fraud Attempt',
-      severity: 'HIGH',
-      overall_risk_score: 74.2,
-      target_identity: 'finance-lead@enterprise-corp.internal',
-      mail_platform: 'Google Workspace Enterprise',
-      exposure_status: 'ASSET_EXPOSED',
-      interaction_required: 'CLICK',
-      cve: 'N/A (Financial Impersonation)',
-      evidence_summary: [
-        'Domain partner-payments.co registered 3 days ago via privacy-shielded registrar.',
-        'Banking wire instructions altered compared to historical vendor ledger in ERP.',
-        'DKIM signature passed but domain alignment failed with legitimate vendor.',
-      ],
-      mitre_techniques: [
-        { id: 'T1566.001', name: 'Spearphishing Attachment', tactic: 'Initial Access' },
-        { id: 'T1589', name: 'Gather Victim Identity Info', tactic: 'Reconnaissance' },
-      ],
-      attack_chain: [
-        { step: 1, node: 'ThreatActor (Unknown BEC)', type: 'actor' },
-        { step: 2, node: 'EmailMessage (Invoice #48291)', type: 'email' },
-        { step: 3, node: 'Identity (finance-lead@enterprise-corp.internal)', type: 'identity' },
-      ],
-      recommended_actions: [
-        { name: 'Flag External Warning Banner', risk: 'LOW', automated: true },
-        { name: 'Place Message in Hold Queue', risk: 'MEDIUM', automated: true },
-      ],
-    },
-    {
-      incident_id: 'INC-849182',
-      sender: 'hr-portal@acme-corp.com',
-      recipient: 'all-staff@acme-corp.com',
-      subject: 'Annual benefits enrollment window & policy updates',
-      verdict: 'Benign',
-      confidence: 0.999,
-      threat_category: 'Legitimate Internal Mail',
-      agents_path: '3 nodes',
-      timestamp: '18m ago',
-      title: 'Verified Internal Communication',
-      severity: 'LOW',
-      overall_risk_score: 4.1,
-      target_identity: 'all-employees@acme-corp.com',
-      mail_platform: 'Microsoft 365 Exchange Online',
-      exposure_status: 'PROTECTED',
-      interaction_required: 'NONE',
-      evidence_summary: [
-        'Internal email matching registered corporate SPF, DKIM, and DMARC records.',
-        'Links point exclusively to approved enterprise HR portal (https://hr.acme-corp.com).',
-        'Zero behavioral anomalies or obfuscated scripts observed in DOM analysis.',
-      ],
-      mitre_techniques: [],
-      attack_chain: [],
-      recommended_actions: [
-        { name: 'Allow Delivery to Inbox', risk: 'LOW', automated: true },
-      ],
-    },
-    {
-      incident_id: 'INC-849170',
-      sender: 'ceo-office@securemail.cc',
-      recipient: 'treasury@enterprise-corp.internal',
-      subject: 'Urgent: confidential project acquisition transfer',
-      verdict: 'Malicious',
-      confidence: 0.987,
-      threat_category: 'VIP Identity Impersonation',
-      agents_path: '6 nodes',
-      timestamp: '24m ago',
-      title: 'Executive VIP Impersonation & Wire Divert',
-      severity: 'CRITICAL',
-      overall_risk_score: 93.5,
-      target_identity: 'treasury@enterprise-corp.internal',
-      mail_platform: 'Microsoft Exchange On-Prem',
-      exposure_status: 'KNOWN_EXPLOITABLE',
-      interaction_required: 'MULTI_STEP',
-      cve: 'CVE-2023-35636',
-      evidence_summary: [
-        'Display name spoofing CEO Identity with external disposable domain securemail.cc.',
-        'High urgency markers and authority spoofing detected in semantic NLP analysis.',
-        'Attempts to bypass dual-authorization financial workflows.',
-      ],
-      mitre_techniques: [
-        { id: 'T1566.002', name: 'Spearphishing Link', tactic: 'Initial Access' },
-        { id: 'T1656', name: 'Impersonation', tactic: 'Defense Evasion' },
-      ],
-      attack_chain: [
-        { step: 1, node: 'ThreatActor (Scattered Spider)', type: 'actor' },
-        { step: 2, node: 'EmailMessage (Confidential Transfer)', type: 'email' },
-        { step: 3, node: 'Identity (treasury@enterprise-corp.internal)', type: 'identity' },
-      ],
-      recommended_actions: [
-        { name: 'Quarantine Email', risk: 'MEDIUM', automated: true },
-        { name: 'Notify Security Operations Desk', risk: 'LOW', automated: true },
-      ],
-    },
-  ]);
+  // Fetch initial ledger and backend health
+  const refreshLedger = useCallback(async () => {
+    try {
+      setLoading(true);
+      setBackendError(null);
+      const [incidents, health, trust, mode] = await Promise.allSettled([
+        listIncidents({ tenantId }),
+        getSystemHealth(),
+        getTrustScore(),
+        getPlatformMode(),
+      ]);
 
-  // Dynamically Computed Metrics
+      if (incidents.status === 'fulfilled') {
+        setIncidentList(incidents.value || []);
+      } else {
+        throw new Error(incidents.reason?.message || 'Failed to connect to backend server at http://localhost:8000');
+      }
+
+      if (health.status === 'fulfilled') setSystemHealth(health.value);
+      if (trust.status === 'fulfilled') setTrustScore(trust.value);
+      if (mode.status === 'fulfilled') setPlatformMode(mode.value.mode);
+    } catch (err: any) {
+      console.error('Error fetching incident ledger:', err);
+      setBackendError(err.message || 'Unable to communicate with FishingMails API');
+    } finally {
+      setLoading(false);
+    }
+  }, [tenantId]);
+
+  useEffect(() => {
+    refreshLedger();
+  }, [refreshLedger]);
+
+  // Clean up SSE connection on unmount
+  useEffect(() => {
+    return () => {
+      if (sseUnsubscribeRef.current) {
+        sseUnsubscribeRef.current();
+      }
+    };
+  }, []);
+
+  // Subscribe to live SSE events for a specific investigation
+  const subscribeToIncidentStream = useCallback((incidentId: string) => {
+    if (sseUnsubscribeRef.current) {
+      sseUnsubscribeRef.current();
+      sseUnsubscribeRef.current = null;
+    }
+
+    setIsStreaming(true);
+    setActiveStreamingIncidentId(incidentId);
+
+    const unsubscribe = subscribeInvestigationEvents(incidentId, {
+      onOpen: () => {
+        setIsStreaming(true);
+      },
+      onEvent: (event) => {
+        setEvents((prev) => [...prev, event]);
+        if (event.event_type === 'agent.proposal.created' && event.data?.approval_token) {
+          setActiveProposal({
+            approval_token: event.data.approval_token,
+            tool_name: event.data.tool_name || event.tool || 'quarantine_email',
+            risk_level: event.data.risk_level || 'HIGH',
+            parameters: event.data.parameters || {},
+            reasoning: event.message,
+            target_identity: event.data.target_identity,
+            incident_id: incidentId,
+          });
+          setApprovalModalOpen(true);
+        }
+      },
+      onError: (err) => {
+        console.warn('SSE stream notice:', err);
+      },
+      onClose: () => {
+        setIsStreaming(false);
+        refreshLedger();
+      },
+    });
+
+    sseUnsubscribeRef.current = unsubscribe;
+  }, [refreshLedger]);
+
+  // Genuine EML File Upload Ingestion
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setUploadLoading(true);
+      setBackendError(null);
+      setEvents([]);
+      setActiveNav('stream');
+
+      // 1. Submit EML payload to real backend POST /api/v1/investigate
+      const createdIncident = await investigateEmail(file, file.name, tenantId);
+
+      // 2. Add to local state immediately
+      setIncidentList((prev) => [createdIncident, ...prev.filter((i) => i.incident_id !== createdIncident.incident_id)]);
+      setSelectedIncident(createdIncident);
+
+      // 3. Connect real SSE stream
+      subscribeToIncidentStream(createdIncident.incident_id);
+
+      // 4. Check if pending approval exists
+      if (createdIncident.pending_approvals && createdIncident.pending_approvals.length > 0) {
+        const topApproval = createdIncident.pending_approvals[0];
+        setActiveProposal({
+          ...topApproval,
+          target_identity: createdIncident.target_identity || createdIncident.recipient,
+          incident_id: createdIncident.incident_id,
+        });
+      }
+    } catch (err: any) {
+      console.error('File upload investigation failed:', err);
+      setBackendError(`Investigation failed: ${err.message}`);
+    } finally {
+      setUploadLoading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  // Dynamically Computed Metrics directly from real incidents
   const metrics = useMemo(() => {
-    const total = 500 + incidentList.length;
-    const threats = incidentList.filter((i) => i.verdict === 'Malicious' || i.verdict === 'Suspicious').length;
-    const active = incidentList.filter((i) => i.severity === 'CRITICAL' || i.severity === 'HIGH').length;
-    const avgConfidence = incidentList.reduce((acc, curr) => acc + curr.confidence, 0) / (incidentList.length || 1);
+    const total = incidentList.length;
+    const threats = incidentList.filter((i) => i.severity === 'CRITICAL' || i.severity === 'HIGH').length;
+    const pendingApprovalCount = incidentList.reduce(
+      (acc, curr) => acc + (curr.pending_approvals?.length || 0),
+      0
+    );
+    const avgConfidence = total > 0
+      ? (incidentList.reduce((acc, curr) => acc + (curr.confidence || 0.9), 0) / total)
+      : 0;
 
     return {
       totalAnalyzed: total.toLocaleString(),
-      threatsCount: threats + 34, // includes deduplicated background rollups
-      activeInvestigations: active,
+      threatsCount: threats.toLocaleString(),
+      pendingApprovals: pendingApprovalCount,
       confidenceRate: `${(avgConfidence * 100).toFixed(1)}%`,
     };
   }, [incidentList]);
 
-  // Threat Queue Stats computed from incident categories
-  const threatQueue = useMemo(() => [
-    { name: 'Zero-Click MonikerLink (CVE-2024-21413)', count: '04', status: 'Awaiting human authorization', progress: 88, color: '#2563eb' },
-    { name: 'Polymorphic BEC Wire Divert', count: '03', status: 'Correlating with ERP telemetry', progress: 64, color: '#2563eb' },
-    { name: 'Active HTML OLE / RTLO Exploit', count: '02', status: 'Detonated in isolated sandbox', progress: 45, color: '#2563eb' },
-    { name: 'VIP Identity Impersonation', count: '02', status: 'Enriching threat intelligence', progress: 30, color: '#2563eb' },
-  ], []);
+  // Real Threat Categories Grouped from Database
+  const threatCategories = useMemo(() => {
+    const counts: Record<string, number> = {};
+    incidentList.forEach((inc) => {
+      const cat = inc.threat_category || 'General Anomaly';
+      counts[cat] = (counts[cat] || 0) + 1;
+    });
+
+    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    const max = entries[0]?.[1] || 1;
+
+    return entries.slice(0, 5).map(([name, count]) => ({
+      name,
+      count: count.toString().padStart(2, '0'),
+      progress: Math.min(100, Math.round((count / max) * 100)),
+    }));
+  }, [incidentList]);
 
   // Filtered Incident Matrix
   const filteredIncidents = useMemo(() => {
     return incidentList.filter((item) => {
       const matchSearch =
-        item.sender.toLowerCase().includes(searchFilter.toLowerCase()) ||
-        item.subject.toLowerCase().includes(searchFilter.toLowerCase()) ||
-        item.incident_id.toLowerCase().includes(searchFilter.toLowerCase()) ||
-        item.threat_category.toLowerCase().includes(searchFilter.toLowerCase());
+        (item.sender || '').toLowerCase().includes(searchFilter.toLowerCase()) ||
+        (item.subject || '').toLowerCase().includes(searchFilter.toLowerCase()) ||
+        (item.incident_id || '').toLowerCase().includes(searchFilter.toLowerCase()) ||
+        (item.threat_category || '').toLowerCase().includes(searchFilter.toLowerCase());
 
       const matchSeverity = severityFilter === 'ALL' || item.severity === severityFilter;
       return matchSearch && matchSeverity;
     });
   }, [incidentList, searchFilter, severityFilter]);
 
-  // Launch Real-Time Multi-Agent Ingestion Pipeline
-  const handleStartStream = () => {
-    setIsStreaming(true);
-    setEvents([]);
-    setInvestigationDrawerOpen(true);
-
-    const streamScenario: StreamEvent[] = [
-      {
-        event_type: 'stage_start',
-        stage: 'INGESTION',
-        message: 'Ingesting inbound RFC 2822 payload (Message-ID: <20240926.exploit.moniker@corporate-updates.net>)...',
-        timestamp: new Date().toISOString(),
-      },
-      {
-        event_type: 'thought',
-        stage: 'INGESTION',
-        message: 'Data privacy evaluation: Payload classified as CONFIDENTIAL. Scrubbing internal credentials and routing to deterministic boundaries.',
-        timestamp: new Date().toISOString(),
-      },
-      {
-        event_type: 'stage_start',
-        stage: 'ANALYSIS',
-        message: 'Deterministic MIME Parser & HTML Analyzer inspecting nested attachments and active URI schemas...',
-        timestamp: new Date().toISOString(),
-      },
-      {
-        event_type: 'skill_activated',
-        stage: 'ANALYSIS',
-        message: 'Forensic Skill Activated: "moniker-link-exploit-triage" (Matched file:// search-ms schema pattern).',
-        timestamp: new Date().toISOString(),
-      },
-      {
-        event_type: 'stage_start',
-        stage: 'VULN_RESEARCH',
-        message: 'Querying CISA KEV, NVD & URLhaus for CVE-2024-21413 and correlating with MITRE ATT&CK T1566.002...',
-        timestamp: new Date().toISOString(),
-      },
-      {
-        event_type: 'evidence',
-        stage: 'VULN_RESEARCH',
-        message: 'Confirmed High-Exploitability Zero-Click MonikerLink (CVSS 9.8). Forced NTLM credential theft over SMB port 445.',
-        timestamp: new Date().toISOString(),
-      },
-      {
-        event_type: 'stage_start',
-        stage: 'EXPOSURE',
-        message: 'Correlating with on-prem Exchange OWA mail server at owa.enterprise-corp.internal...',
-        timestamp: new Date().toISOString(),
-      },
-      {
-        event_type: 'thought',
-        stage: 'EXPOSURE',
-        message: 'Attack Surface Status: KNOWN_EXPLOITABLE (Unpatched Microsoft Outlook / OWA 15.1 build).',
-        timestamp: new Date().toISOString(),
-      },
-      {
-        event_type: 'stage_start',
-        stage: 'INVESTIGATION',
-        message: 'Reconstructing Neo4j lateral movement attack chain: Threat Actor (FIN7) ➔ Campaign ➔ CFO Mailbox.',
-        timestamp: new Date().toISOString(),
-      },
-      {
-        event_type: 'stage_start',
-        stage: 'RESPONSE',
-        message: 'Evaluating tenant autonomy policy (Level 1: Human Approved). Formulating containment proposal...',
-        timestamp: new Date().toISOString(),
-      },
-      {
-        event_type: 'proposal',
-        stage: 'RESPONSE',
-        message: 'Gated Action Proposal: quarantine_email_and_revoke_session (Token: APP-8E2F9A). Awaiting human authorization.',
-        timestamp: new Date().toISOString(),
-      },
-      {
-        event_type: 'complete',
-        stage: 'RESPONSE',
-        message: 'Autonomous triage completed in 1.42s. Awaiting SOC Analyst authorization.',
-        timestamp: new Date().toISOString(),
-      },
-    ];
-
-    streamScenario.forEach((ev, idx) => {
-      setTimeout(() => {
-        setEvents((prev) => [...prev, ev]);
-        if (idx === streamScenario.length - 1) {
-          setIsStreaming(false);
-          setActiveProposal({
-            token: 'APP-8E2F9A',
-            tool_name: 'quarantine_email_and_revoke_session',
-            risk_level: 'HIGH',
-            parameters: {
-              mailbox: 'cfo@enterprise-corp.internal',
-              message_id: '<20240926.exploit.moniker@corporate-updates.net>',
-              revoke_active_sessions: true,
-              block_source_ip: '198.51.100.42',
-            },
-            justification: 'Zero-click Moniker exploit link targeting VIP CFO mailbox. Forced NTLM hash relay detected on outbound port 445.',
-            target_cve: 'CVE-2024-21413 (CVSS 9.8)',
-            target_identity: 'cfo@enterprise-corp.internal',
-          });
-          setApprovalModalOpen(true);
-        }
-      }, (idx + 1) * 550);
-    });
+  // Load Deep Detail for selected incident
+  const handleSelectIncident = async (incident: ComprehensiveIncidentRecord) => {
+    setSelectedIncident(incident);
+    try {
+      const detail = await getIncident(incident.incident_id, { tenantId });
+      setSelectedIncident(detail);
+      // If incident has recorded events, load them into stream view
+      if (detail.events && detail.events.length > 0) {
+        setEvents(detail.events);
+      }
+    } catch (err) {
+      console.warn('Could not load deep detail for incident, using ledger row:', err);
+    }
   };
 
   return (
     <div className="flex min-h-screen bg-[#f7f8fa] text-[#111318]">
-      
-      {/* 1. Left Fixed Sidebar (Swiss Minimalist Enterprise Style) */}
+      {/* Hidden File Input for Real Email Payload Ingestion */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileUpload}
+        accept=".eml,.msg,message/rfc822"
+        className="hidden"
+      />
+
+      {/* 1. Left Fixed Sidebar */}
       <aside className="w-[236px] bg-white border-r border-[#e7e9ee] p-[22px_14px] fixed inset-y-0 left-0 z-30 flex flex-col justify-between">
         <div>
           {/* Brand */}
           <div className="flex items-center gap-2.5 px-2.5 pb-6">
             <div className="w-[30px] h-[30px] rounded-[9px] bg-[#111318] grid place-items-center text-white text-sm font-extrabold overflow-hidden">
-              <img src="/logo.png" alt="F" className="w-full h-full object-contain p-0.5" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+              <span className="font-mono text-xs">FM</span>
             </div>
             <strong className="text-[16px] tracking-[-0.04em] font-bold">
               Fishing<span className="text-[#9aa0aa] font-normal">Mails</span>
@@ -432,14 +345,24 @@ export default function DashboardPage() {
         </div>
 
         {/* Bottom Workspace Badge */}
-        <div className="border-t border-[#e7e9ee] pt-3.5">
-          <div className="flex items-center gap-2.5 px-2.5 py-2">
+        <div className="border-t border-[#e7e9ee] pt-3.5 space-y-2">
+          <div className="px-2.5">
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-[10px] uppercase font-bold text-[#a0a5af]">Authenticated Tenant</label>
+              <span className="text-[9px] font-mono text-[#16945b] bg-[#eef8f2] px-1.5 py-0.5 rounded">VERIFIED</span>
+            </div>
+            <div className="w-full text-xs font-mono bg-[#f4f5f8] border border-[#e7e9ee] rounded px-2 py-1.5 text-[#111318] truncate flex items-center justify-between">
+              <span>{tenantId}</span>
+              <span className="text-[10px] text-[#737986]" title="Tenant context is cryptographically bound to authenticated session">🔒</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2.5 px-2.5 py-1.5">
             <div className="w-7 h-7 rounded-full bg-[#e9edf3] grid place-items-center text-[10px] font-bold text-[#111318]">
               SE
             </div>
             <div className="flex-1 truncate text-left">
-              <b className="text-xs text-[#111318] block leading-tight">tenant-enterprise-demo</b>
-              <small className="text-[10px] text-[#737986] block leading-tight">Seniru Ekanayake (Lead)</small>
+              <b className="text-xs text-[#111318] block leading-tight truncate">{tenantId}</b>
+              <small className="text-[10px] text-[#737986] block leading-tight">Seniru Ekanayake</small>
             </div>
             <span className="text-[#16945b] text-[10px] font-bold">● L1</span>
           </div>
@@ -448,11 +371,34 @@ export default function DashboardPage() {
 
       {/* 2. Main Content Area */}
       <main className="ml-[236px] w-[calc(100%-236px)] p-[30px_36px_44px] max-w-[1600px]">
-        
+        {/* Backend Connectivity Banner */}
+        {backendError && (
+          <div className="mb-6 p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 flex items-center justify-between text-xs font-mono">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-rose-600 animate-pulse" />
+              <span>BACKEND ERROR: {backendError}</span>
+            </div>
+            <button
+              onClick={refreshLedger}
+              className="px-3 py-1 bg-white border border-rose-300 rounded font-bold hover:bg-rose-100 transition"
+            >
+              RETRY CONNECTION
+            </button>
+          </div>
+        )}
+
         {/* Header */}
         <header className="flex items-start justify-between mb-7">
           <div>
-            <div className="text-xs text-[#737986] mb-1.5 font-medium">Saturday, September 26, 2026 &middot; Production SOC Operations</div>
+            <div className="flex items-center gap-2 text-xs text-[#737986] mb-1.5 font-medium">
+              <span>Production SOC Operations</span>
+              <span>&middot;</span>
+              <span className="font-mono text-[#16945b] font-bold">
+                Backend: {systemHealth ? systemHealth.status : (backendError ? 'OFFLINE' : 'CONNECTING...')}
+              </span>
+              <span>&middot;</span>
+              <span className="font-mono text-[#111318]">Mode: {platformMode}</span>
+            </div>
             <h1 className="text-[27px] font-bold tracking-[-0.04em] m-0 text-[#111318]">Threat Operations</h1>
             <div className="text-[13px] text-[#737986] mt-1.5 font-normal">
               Autonomous exploit detection, attack graph reconstruction, and policy-governed containment.
@@ -460,16 +406,18 @@ export default function DashboardPage() {
           </div>
           <div className="flex gap-2">
             <button
-              onClick={() => alert('Forwarding compliance report to Splunk HEC, ArcSight CEF, and Microsoft Sentinel...')}
-              className="border border-[#e7e9ee] bg-white px-3.5 py-2.5 rounded-lg text-xs font-medium text-[#535963] shadow-[0_1px_1px_rgba(0,0,0,0.02)] hover:bg-[#f7f8fa] transition cursor-pointer"
+              onClick={refreshLedger}
+              disabled={loading}
+              className="border border-[#e7e9ee] bg-white px-3.5 py-2.5 rounded-lg text-xs font-medium text-[#535963] shadow-[0_1px_1px_rgba(0,0,0,0.02)] hover:bg-[#f7f8fa] transition cursor-pointer flex items-center gap-1.5"
             >
-              Export SIEM Ledger
+              <span>{loading ? '↻ Syncing...' : '↻ Refresh Ledger'}</span>
             </button>
             <button
-              onClick={handleStartStream}
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploadLoading}
               className="bg-[#111318] text-white border border-[#111318] px-3.5 py-2.5 rounded-lg text-xs font-semibold shadow-sm hover:bg-[#252830] transition cursor-pointer flex items-center gap-1.5"
             >
-              <span>+ Ingest & Triage Payload</span>
+              <span>{uploadLoading ? 'Ingesting EML...' : '+ Upload & Investigate EML'}</span>
             </button>
           </div>
         </header>
@@ -479,255 +427,193 @@ export default function DashboardPage() {
           <div className="space-y-6">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-lg font-bold text-[#111318]">Live LangGraph Agent Reasoning Stream</h2>
+                <h2 className="text-lg font-bold text-[#111318]">
+                  Live LangGraph Agent Reasoning Stream
+                  {activeStreamingIncidentId && (
+                    <span className="text-xs font-mono font-normal text-[#737986] ml-2">
+                      ({activeStreamingIncidentId})
+                    </span>
+                  )}
+                </h2>
                 <p className="text-xs text-[#737986]">Real-time SSE step progression across 6 security nodes</p>
               </div>
               <button onClick={() => setActiveNav('overview')} className="text-xs text-[#2563eb] font-semibold hover:underline">
                 ← Back to Overview
               </button>
             </div>
-            <AgentLiveStreamVisualizer events={events} isStreaming={isStreaming} onStartScenario={handleStartStream} />
+            <AgentLiveStreamVisualizer
+              events={events}
+              isStreaming={isStreaming}
+              onClear={() => setEvents([])}
+            />
           </div>
         ) : activeNav === 'graph' ? (
           <div className="space-y-6">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-lg font-bold text-[#111318]">Neo4j Attack Graph Topology</h2>
+                <h2 className="text-lg font-bold text-[#111318]">Attack Graph Topology</h2>
                 <p className="text-xs text-[#737986]">Traversing multi-hop lateral movement from threat actors to target identities</p>
               </div>
               <button onClick={() => setActiveNav('overview')} className="text-xs text-[#2563eb] font-semibold hover:underline">
                 ← Back to Overview
               </button>
             </div>
-            <AttackGraphVisualizer onSelectAttackChain={() => {}} />
+            <AttackGraphVisualizer incident={selectedIncident || incidentList[0] || null} />
           </div>
         ) : activeNav === 'surface' ? (
           <div className="space-y-6">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-lg font-bold text-[#111318]">10-State Asset Exposure Radar</h2>
+                <h2 className="text-lg font-bold text-[#111318]">Asset Exposure Radar</h2>
                 <p className="text-xs text-[#737986]">Continuous mail infrastructure exposure and exploitability tracking</p>
               </div>
               <button onClick={() => setActiveNav('overview')} className="text-xs text-[#2563eb] font-semibold hover:underline">
                 ← Back to Overview
               </button>
             </div>
-            <ExposureView />
+            <ExposureView incidents={incidentList} />
           </div>
         ) : activeNav === 'governance' ? (
-          <div className="bg-white border border-[#e7e9ee] rounded-xl p-6 shadow-sm space-y-4">
+          <div className="bg-white border border-[#e7e9ee] rounded-xl p-6 shadow-sm space-y-5 font-sans">
             <div className="flex items-center justify-between border-b border-[#e7e9ee] pb-4">
               <div>
                 <h3 className="text-sm font-bold text-[#111318]">Tenant Autonomy & Response Governance (L0–L4)</h3>
                 <p className="text-xs text-[#737986]">Active Policy: Autonomy Level 1 (Human Authorization Required for High/Critical actions)</p>
               </div>
-              <span className="text-xs bg-[#eaf8f1] text-[#16945b] font-bold px-3 py-1 rounded-full">Active Policy: Level 1</span>
+              <span className="text-xs bg-[#eaf8f1] text-[#16945b] font-bold px-3 py-1 rounded-full">
+                Active Policy: Level 1
+              </span>
             </div>
-            <p className="text-xs text-[#505660] leading-relaxed">
-              When a threat proposes high-impact containment (e.g. <code>quarantine_email_and_revoke_session</code> or <code>disable_account</code>), 
-              the system halts execution and issues an immutable cryptographic approval token (<code>APP-XXXXXX</code>) requiring human slide authorization.
-            </p>
-            <div className="pt-2">
-              <button
-                onClick={() => {
-                  setActiveProposal({
-                    token: 'APP-8E2F9A',
-                    tool_name: 'quarantine_email_and_revoke_session',
-                    risk_level: 'HIGH',
-                    parameters: {
-                      mailbox: 'cfo@enterprise-corp.internal',
-                      message_id: '<20240926.exploit.moniker@corporate-updates.net>',
-                      revoke_active_sessions: true,
-                      block_source_ip: '198.51.100.42',
-                    },
-                    justification: 'Manual policy test trigger from SOC Governance dashboard.',
-                    target_cve: 'CVE-2024-21413 (CVSS 9.8)',
-                    target_identity: 'cfo@enterprise-corp.internal',
-                  });
-                  setApprovalModalOpen(true);
-                }}
-                className="bg-[#111318] text-white px-3.5 py-2 rounded-lg text-xs font-semibold hover:bg-[#252830]"
-              >
-                Test Human Approval Token Modal
-              </button>
+
+            {/* Trust Score Card */}
+            {trustScore && (
+              <div className="p-4 rounded-xl bg-[#f8fafc] border border-[#e7e9ee] space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-mono font-bold text-[#737986] uppercase">Agent Trust Score</span>
+                  <span className="text-lg font-mono font-bold text-[#16945b]">
+                    {trustScore.overall_score}% (Grade: {trustScore.grade})
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {trustScore.components?.map((c, idx) => (
+                    <div key={idx} className="p-3 bg-white border border-[#e7e9ee] rounded-lg">
+                      <div className="text-[11px] font-bold text-[#111318]">{c.name}</div>
+                      <div className="text-[10px] text-[#737986] mt-0.5">{c.metric_value}</div>
+                      <div className="text-xs font-mono font-bold text-[#1d5eea] mt-1">{c.score}%</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Pending Approvals Queue */}
+            <div className="space-y-3">
+              <h4 className="text-xs font-mono font-bold uppercase text-[#737986]">
+                Pending Human Approval Tokens across Tenant ({metrics.pendingApprovals})
+              </h4>
+              <div className="divide-y divide-[#e7e9ee] border border-[#e7e9ee] rounded-xl overflow-hidden bg-white">
+                {incidentList.flatMap((inc) => (inc.pending_approvals || []).map((appr) => ({ ...appr, incident: inc }))).length === 0 ? (
+                  <div className="p-6 text-center text-xs text-[#a0a5af] font-mono">
+                    Zero pending actions awaiting authorization. All policies currently satisfied.
+                  </div>
+                ) : (
+                  incidentList.flatMap((inc) => (inc.pending_approvals || []).map((appr) => ({ ...appr, incident: inc }))).map((item, idx) => (
+                    <div key={idx} className="p-4 flex items-center justify-between hover:bg-[#f8fafc] transition">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold font-mono text-[#111318]">{item.tool_name}</span>
+                          <span className="text-[10px] font-mono font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                            Token: {item.approval_token}
+                          </span>
+                          <span className="text-[10px] font-mono text-[#737986]">
+                            Incident: {item.incident.incident_id}
+                          </span>
+                        </div>
+                        <p className="text-xs text-[#737986] mt-1">{item.reasoning}</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setActiveProposal({
+                            approval_token: item.approval_token,
+                            tool_name: item.tool_name,
+                            risk_level: item.risk_level,
+                            parameters: item.parameters,
+                            reasoning: item.reasoning,
+                            target_identity: item.incident.target_identity || item.incident.recipient,
+                            incident_id: item.incident.incident_id,
+                          });
+                          setApprovalModalOpen(true);
+                        }}
+                        className="px-3 py-1.5 bg-[#111318] hover:bg-[#252830] text-white rounded-lg text-xs font-mono uppercase font-bold transition"
+                      >
+                        Authorize Token
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </div>
         ) : (
           <>
             {/* Top Metrics Row */}
             <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3.5">
-              <div className="bg-white border border-[#e7e9ee] rounded-xl p-[18px_19px] shadow-[0_1px_2px_rgba(16,24,40,0.04),0_8px_24px_rgba(16,24,40,0.035)]">
+              <div className="bg-white border border-[#e7e9ee] rounded-xl p-[18px_19px] shadow-sm">
                 <div className="flex justify-between text-[#737986] text-xs font-medium">
-                  <span>Emails Analyzed</span>
-                  <span>24h Ingestion</span>
+                  <span>Durable Incidents</span>
+                  <span>Database State</span>
                 </div>
                 <div className="text-[27px] font-bold tracking-[-0.045em] my-3 text-[#111318]">{metrics.totalAnalyzed}</div>
-                <div className="text-[11px] text-[#16945b] font-medium">↑ 500:1 campaign compression</div>
+                <div className="text-[11px] text-[#16945b] font-medium">Loaded from SQLite backend</div>
               </div>
 
-              <div className="bg-white border border-[#e7e9ee] rounded-xl p-[18px_19px] shadow-[0_1px_2px_rgba(16,24,40,0.04),0_8px_24px_rgba(16,24,40,0.035)]">
+              <div className="bg-white border border-[#e7e9ee] rounded-xl p-[18px_19px] shadow-sm">
                 <div className="flex justify-between text-[#737986] text-xs font-medium">
-                  <span>Exploits & Threats</span>
-                  <span>24h Detected</span>
+                  <span>High / Critical Threats</span>
+                  <span>Active Alerts</span>
                 </div>
                 <div className="text-[27px] font-bold tracking-[-0.045em] my-3 text-[#111318]">{metrics.threatsCount}</div>
-                <div className="text-[11px] text-[#d04444] font-medium">Monikers, OLE & BEC variants</div>
+                <div className="text-[11px] text-[#d04444] font-medium">Validated threat detections</div>
               </div>
 
-              <div className="bg-white border border-[#e7e9ee] rounded-xl p-[18px_19px] shadow-[0_1px_2px_rgba(16,24,40,0.04),0_8px_24px_rgba(16,24,40,0.035)]">
+              <div className="bg-white border border-[#e7e9ee] rounded-xl p-[18px_19px] shadow-sm">
                 <div className="flex justify-between text-[#737986] text-xs font-medium">
-                  <span>Active Investigations</span>
-                  <span>Pending Containment</span>
+                  <span>Pending Containments</span>
+                  <span>Policy Gate (L1)</span>
                 </div>
-                <div className="text-[27px] font-bold tracking-[-0.045em] my-3 text-[#111318]">{metrics.activeInvestigations}</div>
-                <div className="text-[11px] text-[#b7791f] font-medium">1 token held for human approval</div>
+                <div className="text-[27px] font-bold tracking-[-0.045em] my-3 text-[#111318]">{metrics.pendingApprovals}</div>
+                <div className="text-[11px] text-[#b7791f] font-medium">Require human cryptographic sign</div>
               </div>
 
-              <div className="bg-white border border-[#e7e9ee] rounded-xl p-[18px_19px] shadow-[0_1px_2px_rgba(16,24,40,0.04),0_8px_24px_rgba(16,24,40,0.035)]">
+              <div className="bg-white border border-[#e7e9ee] rounded-xl p-[18px_19px] shadow-sm">
                 <div className="flex justify-between text-[#737986] text-xs font-medium">
                   <span>Mean Detection Confidence</span>
-                  <span>All Models & Heuristics</span>
+                  <span>Authoritative Heuristics</span>
                 </div>
                 <div className="text-[27px] font-bold tracking-[-0.045em] my-3 text-[#111318]">{metrics.confidenceRate}</div>
-                <div className="text-[11px] text-[#16945b] font-medium">Deterministic CISA/NVD correlation</div>
+                <div className="text-[11px] text-[#16945b] font-medium">Grounded in verified artifacts</div>
               </div>
             </section>
 
-            {/* Middle Grid: Activity Chart & 6 LangGraph Agents Status */}
-            <section className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.75fr)_minmax(300px,0.75fr)] gap-3.5 mb-3.5">
-              
-              {/* Agentic Detection Activity Chart */}
-              <div className="bg-white border border-[#e7e9ee] rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.04),0_8px_24px_rgba(16,24,40,0.035)]">
-                <div className="flex justify-between items-center p-[17px_19px] border-b border-[#e7e9ee]">
-                  <div>
-                    <div className="text-[13px] font-bold text-[#111318]">Agentic Detection & Ingestion Velocity</div>
-                    <div className="text-[11px] text-[#737986] mt-1">Continuous LangGraph multi-node triage &middot; Last 24 Hours</div>
-                  </div>
-                  <div className="inline-flex items-center gap-1.5 text-[10px] text-[#16945b] font-[650] bg-[#eaf8f1] px-2 py-1 rounded-full">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#16945b] animate-pulse"></span>
-                    <span>6 Nodes Active</span>
-                  </div>
-                </div>
-
-                <div className="p-[10px_18px_15px]">
-                  <div className="h-[205px] relative overflow-hidden">
-                    <svg viewBox="0 0 800 210" preserveAspectRatio="none" className="w-full h-full">
-                      <g stroke="#eef0f3" strokeWidth="1">
-                        <line x1="0" y1="35" x2="800" y2="35" />
-                        <line x1="0" y1="82" x2="800" y2="82" />
-                        <line x1="0" y1="129" x2="800" y2="129" />
-                        <line x1="0" y1="176" x2="800" y2="176" />
-                      </g>
-                      {/* Active Investigations Solid Blue Path */}
-                      <path
-                        d="M0 170 C35 166 40 148 72 153 S110 130 142 142 S180 111 214 126 S253 83 286 104 S320 91 352 99 S390 69 425 88 S465 54 500 77 S538 65 570 72 S606 40 640 59 S680 46 710 55 S754 28 800 39"
-                        fill="none"
-                        stroke="#2563eb"
-                        strokeWidth="2.5"
-                      />
-                      {/* Baseline Dashed Path */}
-                      <path
-                        d="M0 192 C50 186 80 188 120 178 S180 182 220 166 S285 172 320 157 S385 165 420 145 S470 153 510 138 S570 143 610 126 S675 132 715 110 S765 116 800 94"
-                        fill="none"
-                        stroke="#b9c2d2"
-                        strokeWidth="1.5"
-                        strokeDasharray="5 5"
-                      />
-                      {/* Glowing Current Point */}
-                      <circle cx="640" cy="59" r="4.5" fill="#fff" stroke="#2563eb" strokeWidth="2" />
-                    </svg>
-                  </div>
-                  <div className="flex gap-4 text-[10px] text-[#737986] px-1 font-medium items-center">
-                    <span className="flex items-center">
-                      <span className="w-[7px] h-[7px] rounded-full inline-block mr-1.5 bg-[#2563eb]"></span>
-                      Active Ingestion Stream
-                    </span>
-                    <span className="flex items-center">
-                      <span className="w-[7px] h-[7px] rounded-full inline-block mr-1.5 bg-[#b9c2d2]"></span>
-                      Clean Baseline
-                    </span>
-                    <span className="ml-auto text-[#9aa0aa] font-mono">
-                      00:00 &nbsp;&nbsp; 06:00 &nbsp;&nbsp; 12:00 &nbsp;&nbsp; 18:00 &nbsp;&nbsp; Now
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Real 6 LangGraph Nodes Status */}
-              <div className="bg-white border border-[#e7e9ee] rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.04),0_8px_24px_rgba(16,24,40,0.035)]">
-                <div className="flex justify-between items-center p-[17px_19px] border-b border-[#e7e9ee]">
-                  <div className="text-[13px] font-bold text-[#111318]">Agentic Node Status</div>
-                  <div className="text-[11px] text-[#16945b] font-medium">6 / 6 Operational</div>
-                </div>
-                <div className="py-1 divide-y divide-[#f0f1f3]">
-                  <div className="flex items-center gap-3 px-[18px] py-2.5">
-                    <div className="w-6 h-6 rounded-md bg-[#f4f5f7] grid place-items-center text-xs font-bold text-[#111318]">1</div>
-                    <div className="flex-1">
-                      <b className="block text-xs text-[#111318]">Ingestion & Privacy Boundary</b>
-                      <span className="text-[10px] text-[#737986]">DataClassificationEngine · Scrubber</span>
-                    </div>
-                    <span className="text-[9px] px-2 py-0.5 rounded-full bg-[#eaf8f1] text-[#16945b] font-bold">ACTIVE</span>
-                  </div>
-
-                  <div className="flex items-center gap-3 px-[18px] py-2.5">
-                    <div className="w-6 h-6 rounded-md bg-[#f4f5f7] grid place-items-center text-xs font-bold text-[#111318]">2</div>
-                    <div className="flex-1">
-                      <b className="block text-xs text-[#111318]">MIME Parser & Behavioral Sandbox</b>
-                      <span className="text-[10px] text-[#737986]">NetworkGuard SSRF filter · Monikers</span>
-                    </div>
-                    <span className="text-[9px] px-2 py-0.5 rounded-full bg-[#eaf8f1] text-[#16945b] font-bold">ACTIVE</span>
-                  </div>
-
-                  <div className="flex items-center gap-3 px-[18px] py-2.5">
-                    <div className="w-6 h-6 rounded-md bg-[#f4f5f7] grid place-items-center text-xs font-bold text-[#111318]">3</div>
-                    <div className="flex-1">
-                      <b className="block text-xs text-[#111318]">Threat Intelligence & CVE Research</b>
-                      <span className="text-[10px] text-[#737986]">CISA KEV · NVD · URLhaus · AbuseIPDB</span>
-                    </div>
-                    <span className="text-[9px] px-2 py-0.5 rounded-full bg-[#eaf8f1] text-[#16945b] font-bold">ACTIVE</span>
-                  </div>
-
-                  <div className="flex items-center gap-3 px-[18px] py-2.5">
-                    <div className="w-6 h-6 rounded-md bg-[#f4f5f7] grid place-items-center text-xs font-bold text-[#111318]">4</div>
-                    <div className="flex-1">
-                      <b className="block text-xs text-[#111318]">Attack Surface Exposure Radar</b>
-                      <span className="text-[10px] text-[#737986]">10-state asset exposure correlation</span>
-                    </div>
-                    <span className="text-[9px] px-2 py-0.5 rounded-full bg-[#eaf8f1] text-[#16945b] font-bold">ACTIVE</span>
-                  </div>
-
-                  <div className="flex items-center gap-3 px-[18px] py-2.5">
-                    <div className="w-6 h-6 rounded-md bg-[#f4f5f7] grid place-items-center text-xs font-bold text-[#111318]">5</div>
-                    <div className="flex-1">
-                      <b className="block text-xs text-[#111318]">Neo4j Graph & Campaign Aggregator</b>
-                      <span className="text-[10px] text-[#737986]">500:1 campaign rollup · Cypher paths</span>
-                    </div>
-                    <span className="text-[9px] px-2 py-0.5 rounded-full bg-[#eaf8f1] text-[#16945b] font-bold">ACTIVE</span>
-                  </div>
-
-                  <div className="flex items-center gap-3 px-[18px] py-2.5">
-                    <div className="w-6 h-6 rounded-md bg-[#f4f5f7] grid place-items-center text-xs font-bold text-[#111318]">6</div>
-                    <div className="flex-1">
-                      <b className="block text-xs text-[#111318]">Response Policy Governance Engine</b>
-                      <span className="text-[10px] text-[#737986]">Autonomy L0-L4 · Tokens (APP-XXXXXX)</span>
-                    </div>
-                    <span className="text-[9px] px-2 py-0.5 rounded-full bg-[#fff7e7] text-[#b7791f] font-bold">GATED</span>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            {/* Bottom Grid: Recent Investigations Table & Threat Queue */}
+            {/* Bottom Grid: Live Threat Triage Matrix & Threat Vectors */}
             <section className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.75fr)_minmax(300px,0.75fr)] gap-3.5">
-              
               {/* Recent Investigations Table */}
-              <div className="bg-white border border-[#e7e9ee] rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.04),0_8px_24px_rgba(16,24,40,0.035)] overflow-hidden">
+              <div className="bg-white border border-[#e7e9ee] rounded-xl shadow-sm overflow-hidden">
                 <div className="flex justify-between items-center p-[17px_19px] border-b border-[#e7e9ee]">
                   <div>
                     <div className="text-[13px] font-bold text-[#111318]">Live Threat Triage Matrix</div>
-                    <div className="text-[11px] text-[#737986]">Click any incident to inspect attack graph, evidence & containment</div>
+                    <div className="text-[11px] text-[#737986]">
+                      Click any incident to inspect attack graph, evidence & containment
+                    </div>
                   </div>
                   <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      placeholder="Filter sender, vector..."
+                      value={searchFilter}
+                      onChange={(e) => setSearchFilter(e.target.value)}
+                      className="text-xs border border-[#e7e9ee] rounded-lg px-2.5 py-1 text-[#505660] bg-white outline-none w-40"
+                    />
                     <select
                       value={severityFilter}
                       onChange={(e) => setSeverityFilter(e.target.value as any)}
@@ -736,15 +622,16 @@ export default function DashboardPage() {
                       <option value="ALL">All Severities</option>
                       <option value="CRITICAL">Critical</option>
                       <option value="HIGH">High</option>
+                      <option value="MEDIUM">Medium</option>
                       <option value="LOW">Low</option>
                     </select>
                   </div>
                 </div>
 
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto max-h-[500px]">
                   <table className="w-full border-collapse">
-                    <thead>
-                      <tr className="bg-[#fafbfc] border-b border-[#e7e9ee]">
+                    <thead className="sticky top-0 bg-[#fafbfc] border-b border-[#e7e9ee] z-10">
+                      <tr>
                         <th className="text-left text-[10px] text-[#969ba5] uppercase tracking-[0.06em] font-[650] p-[13px_17px]">
                           Sender / Subject
                         </th>
@@ -752,69 +639,106 @@ export default function DashboardPage() {
                           Threat Vector
                         </th>
                         <th className="text-left text-[10px] text-[#969ba5] uppercase tracking-[0.06em] font-[650] p-[13px_17px]">
-                          Verdict
+                          Severity
                         </th>
                         <th className="text-left text-[10px] text-[#969ba5] uppercase tracking-[0.06em] font-[650] p-[13px_17px]">
-                          Confidence
+                          Risk Score
                         </th>
                         <th className="text-left text-[10px] text-[#969ba5] uppercase tracking-[0.06em] font-[650] p-[13px_17px]">
-                          Time
+                          Actions
                         </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#e7e9ee]">
-                      {filteredIncidents.map((item) => (
-                        <tr
-                          key={item.incident_id}
-                          onClick={() => setSelectedIncident(item)}
-                          className="hover:bg-[#f8fafc] transition-colors cursor-pointer"
-                        >
-                          <td className="p-[13px_17px]">
-                            <span className="font-[650] text-[#20232a] text-[11px] block">{item.sender}</span>
-                            <small className="block text-[#989da7] font-normal text-[10px] mt-0.5">{item.subject}</small>
+                      {filteredIncidents.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="p-8 text-center text-xs text-[#737986] font-mono">
+                            {loading ? 'Fetching incidents from backend...' : 'No incidents match the selected filter.'}
                           </td>
-                          <td className="p-[13px_17px] text-[11px] font-medium text-[#505660]">
-                            {item.threat_category}
-                          </td>
-                          <td className="p-[13px_17px]">
-                            {item.verdict === 'Malicious' ? (
-                              <span className="inline-flex items-center px-2 py-1 rounded-full text-[9px] font-bold bg-[#fff0f0] text-[#d04444]">
-                                Malicious
-                              </span>
-                            ) : item.verdict === 'Suspicious' ? (
-                              <span className="inline-flex items-center px-2 py-1 rounded-full text-[9px] font-bold bg-[#fff7e7] text-[#b7791f]">
-                                Suspicious
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center px-2 py-1 rounded-full text-[9px] font-bold bg-[#eaf8f1] text-[#16945b]">
-                                Benign
-                              </span>
-                            )}
-                          </td>
-                          <td className="p-[13px_17px] text-[11px] font-medium text-[#505660]">
-                            {(item.confidence * 100).toFixed(1)}%
-                          </td>
-                          <td className="p-[13px_17px] text-[11px] text-[#737986]">{item.timestamp}</td>
                         </tr>
-                      ))}
+                      ) : (
+                        filteredIncidents.map((item) => (
+                          <tr
+                            key={item.incident_id}
+                            onClick={() => handleSelectIncident(item)}
+                            className="hover:bg-[#f8fafc] transition-colors cursor-pointer"
+                          >
+                            <td className="p-[13px_17px]">
+                              <span className="font-[650] text-[#20232a] text-[11px] block">{item.sender}</span>
+                              <small className="block text-[#989da7] font-normal text-[10px] mt-0.5 truncate max-w-xs">
+                                {item.subject || item.title}
+                              </small>
+                            </td>
+                            <td className="p-[13px_17px] text-[11px] font-medium text-[#505660]">
+                              {item.threat_category}
+                            </td>
+                            <td className="p-[13px_17px]">
+                              <span
+                                className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                                  item.severity === 'CRITICAL'
+                                    ? 'bg-rose-50 text-rose-600'
+                                    : item.severity === 'HIGH'
+                                    ? 'bg-orange-50 text-orange-600'
+                                    : 'bg-blue-50 text-blue-600'
+                                }`}
+                              >
+                                {item.severity}
+                              </span>
+                            </td>
+                            <td className="p-[13px_17px] text-[11px] font-mono font-bold text-[#111318]">
+                              {item.overall_risk_score}
+                            </td>
+                            <td className="p-[13px_17px]">
+                              {item.pending_approvals && item.pending_approvals.length > 0 ? (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const appr = item.pending_approvals[0];
+                                    setActiveProposal({
+                                      ...appr,
+                                      target_identity: item.target_identity || item.recipient,
+                                      incident_id: item.incident_id,
+                                    });
+                                    setApprovalModalOpen(true);
+                                  }}
+                                  className="px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-mono uppercase font-bold rounded shadow-sm transition"
+                                >
+                                  Authorize
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    subscribeToIncidentStream(item.incident_id);
+                                    setActiveNav('stream');
+                                  }}
+                                  className="text-[10px] font-mono text-[#1d5eea] hover:underline"
+                                >
+                                  Stream SSE
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))
+                      )}
                     </tbody>
                   </table>
                 </div>
               </div>
 
-              {/* Threat Queue Card */}
-              <div className="bg-white border border-[#e7e9ee] rounded-xl shadow-[0_1px_2px_rgba(16,24,40,0.04),0_8px_24px_rgba(16,24,40,0.035)] pb-2">
+              {/* Threat Vectors Card */}
+              <div className="bg-white border border-[#e7e9ee] rounded-xl shadow-sm pb-2">
                 <div className="flex justify-between items-center p-[17px_19px] border-b border-[#e7e9ee]">
-                  <div className="text-[13px] font-bold text-[#111318]">Campaign Threat Vectors</div>
-                  <div className="text-[11px] text-[#737986] font-medium">500:1 Deduplicated</div>
+                  <div className="text-[13px] font-bold text-[#111318]">Discovered Threat Vectors</div>
+                  <div className="text-[11px] text-[#737986] font-medium">Aggregated across SQLite</div>
                 </div>
                 <div className="divide-y divide-[#e7e9ee]">
-                  {threatQueue.map((item, idx) => (
+                  {threatCategories.map((item, idx) => (
                     <div key={idx} className="flex items-center gap-3 p-[12px_18px]">
-                      <div className="text-[15px] font-bold text-[#111318] w-6">{item.count}</div>
-                      <div className="flex-1">
-                        <b className="text-[11px] text-[#111318] block">{item.name}</b>
-                        <span className="text-[10px] text-[#737986]">{item.status}</span>
+                      <div className="text-[15px] font-bold text-[#111318] w-6 font-mono">{item.count}</div>
+                      <div className="flex-1 truncate">
+                        <b className="text-[11px] text-[#111318] block truncate">{item.name}</b>
+                        <span className="text-[10px] text-[#737986]">Observed incident telemetry</span>
                       </div>
                       <div className="h-1 w-[60px] rounded-full bg-[#e9ebef] overflow-hidden">
                         <div className="h-full bg-[#2563eb]" style={{ width: `${item.progress}%` }}></div>
@@ -833,25 +757,16 @@ export default function DashboardPage() {
         <IncidentDetailModal
           incident={selectedIncident}
           onClose={() => setSelectedIncident(null)}
-          onTriggerContainment={() => {
-            const proposal = {
-              token: 'APP-8E2F9A',
-              tool_name: selectedIncident.recommended_actions.find((a) => a.requires_approval)?.name || 'quarantine_email_and_revoke_session',
-              risk_level: 'HIGH',
-              parameters: {
-                mailbox: selectedIncident.target_identity,
-                message_id: selectedIncident.incident_id,
-                revoke_active_sessions: true,
-                block_source_ip: '198.51.100.42',
-              },
-              justification: `High-risk exploit detected (${selectedIncident.title}). Forced NTLM relay mitigation required.`,
-              target_cve: selectedIncident.cve || 'CVE-2024-21413',
-              target_identity: selectedIncident.target_identity,
-            };
-            setActiveProposal(proposal);
+          onTriggerContainment={(proposal) => {
+            setActiveProposal({
+              ...proposal,
+              target_identity: selectedIncident.target_identity || selectedIncident.recipient,
+              incident_id: selectedIncident.incident_id,
+            });
             setSelectedIncident(null);
             setApprovalModalOpen(true);
           }}
+          onApproveSuccess={refreshLedger}
         />
       )}
 
@@ -861,37 +776,12 @@ export default function DashboardPage() {
           isOpen={approvalModalOpen}
           onClose={() => setApprovalModalOpen(false)}
           proposal={activeProposal}
-          onApprove={() => {
-            alert(`Containment Authorized! Cryptographic token ${activeProposal.token} validated. Email quarantined and active webmail session revoked.`);
-            setApprovalModalOpen(false);
+          tenantId={tenantId}
+          onSuccess={() => {
+            refreshLedger();
           }}
         />
       )}
-
-      {/* 5. Live Stream Simulation Slide-over Modal */}
-      {investigationDrawerOpen && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex justify-end">
-          <div className="w-full max-w-2xl bg-white h-full shadow-2xl p-6 overflow-y-auto flex flex-col">
-            <div className="flex items-center justify-between pb-4 border-b border-[#e7e9ee] mb-4">
-              <div>
-                <h3 className="text-base font-bold text-[#111318]">Live Autonomous Agent Reasoning Stream</h3>
-                <p className="text-xs text-[#737986]">Real-time LangGraph multi-agent execution pipeline</p>
-              </div>
-              <button
-                onClick={() => setInvestigationDrawerOpen(false)}
-                className="text-[#737986] hover:text-[#111318] p-1 rounded-lg hover:bg-[#f2f4f7]"
-              >
-                ✕
-              </button>
-            </div>
-            
-            <div className="flex-1">
-              <AgentLiveStreamVisualizer events={events} isStreaming={isStreaming} onStartScenario={handleStartStream} />
-            </div>
-          </div>
-        </div>
-      )}
-
     </div>
   );
 }

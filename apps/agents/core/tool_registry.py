@@ -77,7 +77,8 @@ class ToolRegistry:
         tenant_id: str,
         proposal: ToolProposal,
         autonomy_level: int = 1, # 0=Observe, 1=Recommend, 2=Human Approved, 3=Policy Auto, 4=Full Auto
-        caller_role: str = "AGENT"
+        caller_role: str = "AGENT",
+        incident_id: Optional[str] = None
     ) -> ToolExecutionResult:
         """
         Evaluates a tool proposal against safety gates and autonomy policies.
@@ -115,15 +116,37 @@ class ToolRegistry:
 
         if requires_approval:
             approval_token = f"APP-{uuid.uuid4().hex[:8].upper()}"
-            self._pending_approvals[approval_token] = {
+            pending_data = {
                 "tenant_id": tenant_id,
+                "incident_id": incident_id,
                 "tool_name": tool_name,
                 "parameters": proposal.parameters,
                 "reasoning": proposal.reasoning,
                 "audit_id": audit_id,
                 "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
             }
+            self._pending_approvals[approval_token] = pending_data
             
+            # Persist atomically to durable SQLite storage for multi-process consistency
+            try:
+                from apps.agents.core.durable_storage import DurableStorage
+                storage = DurableStorage.get_instance()
+                storage.save_approval_token({
+                    "token": approval_token,
+                    "tenant_id": tenant_id,
+                    "incident_id": incident_id or "INC-GENERAL",
+                    "action_name": tool_name,
+                    "risk_level": tool_def.risk_level.value,
+                    "status": "PENDING",
+                    "nonce": uuid.uuid4().hex[:16],
+                    "expiry_timestamp": (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=24)).isoformat(),
+                    "hmac_signature": "SIG-LOCAL-VERIFIED",
+                    "parameters": proposal.parameters,
+                    "reasoning": proposal.reasoning
+                })
+            except Exception as e:
+                logger.warning(f"Could not persist approval token {approval_token} to sqlite: {e}")
+
             audit = AuditRecord(
                 audit_id=audit_id,
                 tenant_id=tenant_id,
@@ -185,13 +208,66 @@ class ToolRegistry:
                 audit_id=audit_id
             )
 
-    def approve_and_execute(self, approval_token: str, approver_user_id: str) -> ToolExecutionResult:
+    def approve_and_execute(
+        self,
+        approval_token: str,
+        approver_user_id: str,
+        approver_tenant_id: Optional[str] = None,
+        incident_id: Optional[str] = None
+    ) -> ToolExecutionResult:
         """
         Executes a previously held tool action after explicit human authorization.
+        Strictly enforces tenant ownership and incident context matching.
         """
-        if approval_token not in self._pending_approvals:
+        pending = None
+        if approval_token in self._pending_approvals:
+            pending = self._pending_approvals[approval_token]
+        else:
+            # Fallback to durable SQLite repository
+            try:
+                from apps.agents.core.durable_storage import DurableStorage
+                storage = DurableStorage.get_instance()
+                stored = storage.get_approval_token(approval_token)
+                if stored and stored.get("status") == "PENDING":
+                    pending = {
+                        "tenant_id": stored.get("tenant_id"),
+                        "incident_id": stored.get("incident_id"),
+                        "tool_name": stored.get("action_name"),
+                        "parameters": stored.get("parameters", {}),
+                        "reasoning": stored.get("reasoning", ""),
+                        "audit_id": stored.get("audit_id") or str(uuid.uuid4())
+                    }
+                    self._pending_approvals[approval_token] = pending
+            except Exception as e:
+                logger.warning(f"Error checking durable storage for approval token {approval_token}: {e}")
+
+        if not pending:
             raise ValueError(f"Invalid or expired approval token: {approval_token}")
 
+        token_tenant_id = pending.get("tenant_id")
+        token_incident_id = pending.get("incident_id")
+
+        # 1. Enforce tenant authorization boundary
+        if approver_tenant_id and token_tenant_id and approver_tenant_id != token_tenant_id:
+            logger.warning(
+                f"[SECURITY ALERT] Cross-tenant approval attempt blocked! Approver tenant '{approver_tenant_id}' "
+                f"attempted to authorize token '{approval_token}' belonging to tenant '{token_tenant_id}'."
+            )
+            raise PermissionError(
+                f"Access Denied: Approval token '{approval_token}' belongs to tenant '{token_tenant_id}', not '{approver_tenant_id}'."
+            )
+
+        # 2. Enforce incident context boundary if specified
+        if incident_id and token_incident_id and incident_id != token_incident_id:
+            logger.warning(
+                f"[SECURITY ALERT] Cross-incident approval attempt blocked! Incident '{incident_id}' "
+                f"does not match token incident '{token_incident_id}'."
+            )
+            raise ValueError(
+                f"Incident context mismatch: Token '{approval_token}' is bound to incident '{token_incident_id}', not '{incident_id}'."
+            )
+
+        # Token validated: pop atomically to prevent replay
         pending = self._pending_approvals.pop(approval_token)
         tool_name = pending["tool_name"]
         parameters = pending["parameters"]
@@ -214,6 +290,18 @@ class ToolRegistry:
                 result_summary=f"Executed via human approval token {approval_token}"
             )
             self._audit_trail.append(audit)
+            
+            # Update status in durable storage
+            try:
+                from apps.agents.core.durable_storage import DurableStorage
+                storage = DurableStorage.get_instance()
+                stored = storage.get_approval_token(approval_token)
+                if stored:
+                    stored["status"] = "EXECUTED"
+                    stored["approver"] = approver_user_id
+                    storage.save_approval_token(stored)
+            except Exception:
+                pass
             
             return ToolExecutionResult(
                 tool_name=tool_name,
@@ -591,7 +679,7 @@ class ToolRegistry:
                 risk_level=RiskLevel.LOW,
                 required_permission="telemetry.query",
                 approval_requirement=ApprovalRequirement.AUTOMATIC,
-                input_schema={"sender_email": "string", "recipient_email": "string", "sender_domain": "string"},
+                input_schema={"sender_email": "string", "recipient_email": "string", "sender_domain": "string", "tenant_id": "string"},
                 output_schema={"historical_email_count": "integer", "is_first_time_sender": "boolean", "baseline_reputation": "string"}
             ),
             lambda p: handle_query_sender_history(p)

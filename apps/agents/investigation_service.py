@@ -159,11 +159,28 @@ class InvestigationService:
 
         eml_sha256 = hashlib.sha256(raw_eml).hexdigest()
         workflow_id = f"wf-{uuid.uuid4().hex[:8]}"
+
+        # Resolve active planner configuration from ZeroCodeStore if available
+        active_mode = "HYBRID"
+        active_policy = "LLM_FIRST"
+        try:
+            from apps.agents.core.agent_builder import ZeroCodeStore
+            agents = ZeroCodeStore.get_instance().list_agents()
+            if agents:
+                active_mode = agents[0].planner_mode or "HYBRID"
+                active_policy = agents[0].hybrid_arbitration_policy or "LLM_FIRST"
+        except Exception:
+            pass
+
         initial_state: SecurityState = {
             "tenant_id": tenant_id,
+            "incident_id": incident_id,
+            "agent_run_id": agent_run_id,
             "workflow_id": workflow_id,
             "autonomy_level": autonomy_level,
-            "raw_eml": raw_eml
+            "raw_eml": raw_eml,
+            "planner_mode": active_mode,
+            "hybrid_policy": active_policy
         }
 
         # 2. State: PARSING
@@ -924,10 +941,10 @@ class InvestigationService:
         logger.info(f"Created Comprehensive Incident {incident_id} ({record.title}) - Trust Score: {trust_score.overall_score}%")
         return record
 
-    def list_incidents(self, tenant_id: Optional[str] = None) -> List[ComprehensiveIncidentRecord]:
+    def list_incidents(self, tenant_id: Optional[str] = None, limit: Optional[int] = 100) -> List[ComprehensiveIncidentRecord]:
         """Returns incidents ledger, prioritizing durable storage with in-memory caching."""
         try:
-            durable_records = self.storage.list_incidents(tenant_id)
+            durable_records = self.storage.list_incidents(tenant_id, limit=limit)
             if durable_records:
                 loaded = []
                 for d in durable_records:
@@ -945,6 +962,8 @@ class InvestigationService:
         incs = list(self._incidents_map.values())
         if tenant_id:
             incs = [i for i in incs if i.tenant_id == tenant_id]
+        if limit and limit > 0:
+            incs = incs[:limit]
         return incs
 
     def get_incident(self, incident_id: str, tenant_id: Optional[str] = None) -> Optional[ComprehensiveIncidentRecord]:
