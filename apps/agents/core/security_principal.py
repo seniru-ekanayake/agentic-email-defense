@@ -15,6 +15,7 @@ from fastapi import Request, HTTPException
 logger = logging.getLogger("SecurityPrincipal")
 
 JWT_ALGORITHM = "HS256"
+DEV_FALLBACK_SECRET = "fishingmails-dev-test-secret-minimum-32-chars-long-for-local-testing"
 INSECURE_DEV_SECRETS = {
     "",
     "dev-secret",
@@ -22,20 +23,50 @@ INSECURE_DEV_SECRETS = {
     "change-me",
     "test",
     "12345678",
-    "fishingmails-dev-insecure-test-secret-change-in-production"
+    "fishingmails-dev-insecure-test-secret-change-in-production",
+    "your-secure-32-byte-secret-key-goes-here-change-in-production",
+    "generate-a-unique-32-byte-secret-key-for-your-production-deployment",
+    "dev-insecure-test-secret-key-32chars",
+    DEV_FALLBACK_SECRET
 }
-DEV_FALLBACK_SECRET = "fishingmails-dev-test-secret-minimum-32-chars-long-for-local-testing"
 
 
 def get_environment() -> str:
     """
     Returns the normalized operating environment:
     'production', 'staging', 'development', or 'test'.
-    Defaults deterministically to 'production' (fail-closed) if unset.
+    
+    Supports:
+    - FISHINGMAILS_ENV (primary system variable)
+    - ENVIRONMENT (standard operating alias)
+    
+    SECURITY INVARIANTS:
+    1. If both FISHINGMAILS_ENV and ENVIRONMENT are provided and conflict, fails closed immediately.
+    2. If an invalid or ambiguous environment string is provided, fails closed immediately.
+    3. If neither is configured, defaults deterministically to 'production' (fail-closed default).
     """
-    raw = os.environ.get("FISHINGMAILS_ENV", "").strip().lower()
-    if raw in ("production", "staging", "development", "test"):
-        return raw
+    f_env = os.environ.get("FISHINGMAILS_ENV", "").strip().lower()
+    g_env = os.environ.get("ENVIRONMENT", "").strip().lower()
+
+    valid_modes = {"production", "staging", "development", "test"}
+
+    if f_env and g_env:
+        if f_env != g_env:
+            raise RuntimeError(
+                f"FATAL SECURITY CONFIGURATION ERROR: Conflicting environment selectors: "
+                f"FISHINGMAILS_ENV='{f_env}' vs ENVIRONMENT='{g_env}'. Failing closed."
+            )
+        resolved = f_env
+    else:
+        resolved = f_env or g_env
+
+    if resolved:
+        if resolved not in valid_modes:
+            raise RuntimeError(
+                f"FATAL SECURITY CONFIGURATION ERROR: Invalid or ambiguous operating environment '{resolved}'. "
+                f"Must be one of {valid_modes}. Failing closed."
+            )
+        return resolved
 
     # Check ProductionManager fallback if available
     try:
@@ -49,6 +80,7 @@ def get_environment() -> str:
         pass
 
     return "production"
+
 
 
 def is_production_mode() -> bool:

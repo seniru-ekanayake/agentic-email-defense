@@ -101,7 +101,12 @@ if os.path.exists("assets"):
 @app.on_event("startup")
 async def startup_security_gate():
     """Validates production security configuration on startup (fails closed)."""
-    from apps.agents.core.security_principal import get_jwt_secret_key, is_local_auth_fallback_enabled
+    from apps.agents.core.security_principal import (
+        get_environment,
+        get_jwt_secret_key,
+        is_local_auth_fallback_enabled,
+    )
+    get_environment()
     get_jwt_secret_key()
     is_local_auth_fallback_enabled()
 
