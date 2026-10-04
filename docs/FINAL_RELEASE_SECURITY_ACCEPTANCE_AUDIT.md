@@ -250,7 +250,7 @@ Key files modified and verified during this remediation:
 ## 20. Final Commit Provenance
 
 - **Branch:** `develop`
-- **Commit:** `ae6742fa1ec0dc425271d5e54e73c5bd8d54a6e1`
+- **Commit:** `acc8c353f478a8767e7d23d8c1c4e7fb2a95c479`
 - **Author:** `seniru-ekanayake <ekanayakeseniru0@gmail.com>`
 - **Message:** `fix(security): implement identity-bound tenant authorization and approval token isolation`
 
