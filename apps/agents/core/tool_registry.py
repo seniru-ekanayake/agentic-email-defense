@@ -232,7 +232,7 @@ class ToolRegistry:
                     pending = {
                         "tenant_id": stored.get("tenant_id"),
                         "incident_id": stored.get("incident_id"),
-                        "tool_name": stored.get("action_name"),
+                        "tool_name": stored.get("action_name") or stored.get("tool_name"),
                         "parameters": stored.get("parameters", {}),
                         "reasoning": stored.get("reasoning", ""),
                         "audit_id": stored.get("audit_id") or str(uuid.uuid4())
