@@ -229,20 +229,57 @@ class ToolRegistry:
                 storage = DurableStorage.get_instance()
                 stored = storage.get_approval_token(approval_token)
                 if stored and stored.get("status") == "PENDING":
+                    # Check expiry
+                    exp = stored.get("expiry_timestamp")
+                    is_expired = False
+                    if exp:
+                        try:
+                            if isinstance(exp, (int, float)):
+                                is_expired = time.time() > exp
+                            elif isinstance(exp, str):
+                                exp_dt = datetime.datetime.fromisoformat(exp.replace("Z", "+00:00"))
+                                is_expired = datetime.datetime.now(datetime.timezone.utc) > exp_dt
+                        except Exception:
+                            pass
+                    
+                    if is_expired:
+                        stored["status"] = "EXPIRED"
+                        storage.save_approval_token(stored)
+                        raise ValueError(f"Approval token '{approval_token}' has expired.")
+
                     pending = {
                         "tenant_id": stored.get("tenant_id"),
                         "incident_id": stored.get("incident_id"),
                         "tool_name": stored.get("action_name") or stored.get("tool_name"),
                         "parameters": stored.get("parameters", {}),
                         "reasoning": stored.get("reasoning", ""),
-                        "audit_id": stored.get("audit_id") or str(uuid.uuid4())
+                        "audit_id": stored.get("audit_id") or str(uuid.uuid4()),
+                        "expiry_timestamp": stored.get("expiry_timestamp")
                     }
                     self._pending_approvals[approval_token] = pending
+            except ValueError:
+                raise
             except Exception as e:
                 logger.warning(f"Error checking durable storage for approval token {approval_token}: {e}")
 
         if not pending:
             raise ValueError(f"Invalid or expired approval token: {approval_token}")
+
+        # Check in-memory expiry if present
+        token_exp = pending.get("expiry_timestamp")
+        if token_exp:
+            is_expired = False
+            try:
+                if isinstance(token_exp, (int, float)):
+                    is_expired = time.time() > token_exp
+                elif isinstance(token_exp, str):
+                    exp_dt = datetime.datetime.fromisoformat(token_exp.replace("Z", "+00:00"))
+                    is_expired = datetime.datetime.now(datetime.timezone.utc) > exp_dt
+            except Exception:
+                pass
+            if is_expired:
+                self._pending_approvals.pop(approval_token, None)
+                raise ValueError(f"Approval token '{approval_token}' has expired.")
 
         token_tenant_id = pending.get("tenant_id")
         token_incident_id = pending.get("incident_id")
