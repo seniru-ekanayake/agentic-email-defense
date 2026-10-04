@@ -138,26 +138,55 @@ async def set_platform_mode(request: Request):
 @app.post("/api/v1/auth/token")
 async def obtain_token(request: Request):
     """
-    Issues a cryptographically signed JWT token.
-    In PRODUCTION: requires admin principal authorization to issue arbitrary identity tokens.
-    In DEVELOPMENT/TEST: allows issuing tokens for testing principals.
+    Direct token issuance endpoint.
+    IN PRODUCTION: Strictly DISABLED. Production tokens MUST originate from an authoritative
+    enterprise identity provider (IdP). Unauthenticated callers receive HTTP 401 Unauthorized,
+    and authenticated callers receive HTTP 403 Forbidden.
+    IN DEVELOPMENT / TEST: Controlled minting permitted for testing identities with strictly bounded claims.
     """
-    body = await request.json()
+    if is_production_mode():
+        # First verify authentication: unauthenticated callers fail with HTTP 401
+        principal = get_authenticated_principal(request)
+        # Authenticated callers in production cannot mint arbitrary tokens: HTTP 403
+        raise HTTPException(
+            status_code=403,
+            detail="Direct token minting is disabled in PRODUCTION mode. Use enterprise IdP."
+        )
+
+    # In DEVELOPMENT / TEST mode:
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
     subject_id = body.get("subject_id", "analyst_alpha")
     tenant_id = body.get("tenant_id", "tenant-enterprise-prod")
     roles = body.get("roles", ["SOC_ANALYST"])
+    requested_exp = body.get("expires_in", 86400)
 
-    if is_production_mode():
-        # Require admin authentication to generate tokens
-        principal = get_authenticated_principal(request)
-        if not principal.has_role("ADMIN") and not principal.has_role("SOC_ADMIN"):
-            raise HTTPException(status_code=403, detail="Admin authorization required to issue tokens in production.")
+    # Securely bound expiration (max 24 hours / 86400 seconds)
+    if not isinstance(requested_exp, (int, float)) or requested_exp <= 0 or requested_exp > 86400:
+        requested_exp = 86400
 
-    token = create_principal_token(subject_id=subject_id, tenant_id=tenant_id, roles=roles)
+    # Whitelist allowed roles in test/dev mode
+    ALLOWED_ROLES = {"SOC_ANALYST", "INCIDENT_RESPONDER", "SOC_ADMIN", "ADMIN"}
+    if isinstance(roles, list):
+        sanitized_roles = [r for r in roles if r in ALLOWED_ROLES]
+    else:
+        sanitized_roles = []
+    if not sanitized_roles:
+        sanitized_roles = ["SOC_ANALYST"]
+
+    token = create_principal_token(
+        subject_id=str(subject_id)[:64],
+        tenant_id=str(tenant_id)[:64],
+        roles=sanitized_roles,
+        expires_in_seconds=int(requested_exp)
+    )
     return JSONResponse(content={
         "access_token": token,
         "token_type": "bearer",
-        "expires_in": 86400,
+        "expires_in": int(requested_exp),
         "tenant_id": tenant_id,
         "subject_id": subject_id
     })
