@@ -1,0 +1,33 @@
+{
+  "metadata": {
+    "test_type": "FAILURE_DRIVEN_REPLANNING",
+    "incident_id": "INC-FAIL-REPLAN-TEST",
+    "commit": "a886a083cc1f1fdab5530e26336f33029cedf95a",
+    "branch": "develop",
+    "timestamp": "2026-10-04T20:04:20.017044+00:00"
+  },
+  "cycle_n_failure": {
+    "executed_tool": "ThreatIntelFeeds",
+    "status": "FAILED",
+    "error_message": "HTTP 503 Service Unavailable",
+    "persisted_state_hash": "6f445d3a883b195df5eafc53a94c421bce7252ddffcbec1b0b54d8225102711e"
+  },
+  "cycle_n1_adaptation": {
+    "planner_input_state_hash": "6f445d3a883b195df5eafc53a94c421bce7252ddffcbec1b0b54d8225102711e",
+    "failed_tools_detected_in_context": [
+      "ThreatIntelFeeds"
+    ],
+    "new_decision": {
+      "action": "RUN_TOOL",
+      "selected_tool": "UrlSandboxRunner",
+      "loop_prevention_verified": true,
+      "rationale": "UrlSandboxRunner performs DOM/JS isolation rendering to trace multi-hop redirects and login forms."
+    },
+    "subsequent_execution": {
+      "tool_name": "UrlSandboxRunner",
+      "success": true,
+      "executed": true,
+      "audit_id": "5b5888b4-1b5d-43d1-bc1e-7807aad6a89d"
+    }
+  }
+}

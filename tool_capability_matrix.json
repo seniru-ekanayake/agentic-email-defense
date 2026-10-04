@@ -1,0 +1,190 @@
+{
+  "metadata": {
+    "title": "FISHINGMAILS TOOL CAPABILITY MATRIX",
+    "commit": "a886a083cc1f1fdab5530e26336f33029cedf95a",
+    "branch": "develop",
+    "timestamp": "2026-10-04T20:04:20.020507+00:00"
+  },
+  "tools": [
+    {
+      "tool_name": "AttachmentAnalyzer",
+      "classification": "DETERMINISTIC_LOCAL",
+      "actual_external_network_call": false,
+      "actual_external_service": null,
+      "local_deterministic_computation": true,
+      "local_playwright": false,
+      "not_configured_in_environment": false,
+      "evidence_identifier": "TOOL-CAP-AttachmentAnalyzer"
+    },
+    {
+      "tool_name": "CisaKevCorrelator",
+      "classification": "DETERMINISTIC_LOCAL",
+      "actual_external_network_call": false,
+      "actual_external_service": "Local Threat Caches",
+      "local_deterministic_computation": true,
+      "local_playwright": false,
+      "not_configured_in_environment": false,
+      "evidence_identifier": "TOOL-CAP-CisaKevCorrelator"
+    },
+    {
+      "tool_name": "ThreatIntelFeeds",
+      "classification": "DETERMINISTIC_LOCAL",
+      "actual_external_network_call": false,
+      "actual_external_service": "Local Threat Caches",
+      "local_deterministic_computation": true,
+      "local_playwright": false,
+      "not_configured_in_environment": false,
+      "evidence_identifier": "TOOL-CAP-ThreatIntelFeeds"
+    },
+    {
+      "tool_name": "UnicodeAnalyzer",
+      "classification": "DETERMINISTIC_LOCAL",
+      "actual_external_network_call": false,
+      "actual_external_service": null,
+      "local_deterministic_computation": true,
+      "local_playwright": false,
+      "not_configured_in_environment": false,
+      "evidence_identifier": "TOOL-CAP-UnicodeAnalyzer"
+    },
+    {
+      "tool_name": "UrlSandboxRunner",
+      "classification": "LIVE_LOCAL",
+      "actual_external_network_call": false,
+      "actual_external_service": "Local Playwright Chromium Sandbox",
+      "local_deterministic_computation": false,
+      "local_playwright": true,
+      "not_configured_in_environment": false,
+      "evidence_identifier": "TOOL-CAP-UrlSandboxRunner"
+    },
+    {
+      "tool_name": "block_ioc",
+      "classification": "NOT_CONFIGURED",
+      "actual_external_network_call": false,
+      "actual_external_service": "M365 Graph / Okta / Corporate Firewall",
+      "local_deterministic_computation": false,
+      "local_playwright": false,
+      "not_configured_in_environment": true,
+      "evidence_identifier": "TOOL-CAP-block_ioc"
+    },
+    {
+      "tool_name": "block_sender",
+      "classification": "NOT_CONFIGURED",
+      "actual_external_network_call": false,
+      "actual_external_service": "M365 Graph / Okta / Corporate Firewall",
+      "local_deterministic_computation": false,
+      "local_playwright": false,
+      "not_configured_in_environment": true,
+      "evidence_identifier": "TOOL-CAP-block_sender"
+    },
+    {
+      "tool_name": "create_soc_ticket",
+      "classification": "DETERMINISTIC_LOCAL",
+      "actual_external_network_call": false,
+      "actual_external_service": null,
+      "local_deterministic_computation": true,
+      "local_playwright": false,
+      "not_configured_in_environment": false,
+      "evidence_identifier": "TOOL-CAP-create_soc_ticket"
+    },
+    {
+      "tool_name": "disable_account",
+      "classification": "NOT_CONFIGURED",
+      "actual_external_network_call": false,
+      "actual_external_service": "M365 Graph / Okta / Corporate Firewall",
+      "local_deterministic_computation": false,
+      "local_playwright": false,
+      "not_configured_in_environment": true,
+      "evidence_identifier": "TOOL-CAP-disable_account"
+    },
+    {
+      "tool_name": "dns_spf_dmarc_recon",
+      "classification": "DETERMINISTIC_LOCAL",
+      "actual_external_network_call": true,
+      "actual_external_service": "Public DNS",
+      "local_deterministic_computation": true,
+      "local_playwright": false,
+      "not_configured_in_environment": false,
+      "evidence_identifier": "TOOL-CAP-dns_spf_dmarc_recon"
+    },
+    {
+      "tool_name": "force_password_reset",
+      "classification": "NOT_CONFIGURED",
+      "actual_external_network_call": false,
+      "actual_external_service": "M365 Graph / Okta / Corporate Firewall",
+      "local_deterministic_computation": false,
+      "local_playwright": false,
+      "not_configured_in_environment": true,
+      "evidence_identifier": "TOOL-CAP-force_password_reset"
+    },
+    {
+      "tool_name": "inspect_attachment",
+      "classification": "DETERMINISTIC_LOCAL",
+      "actual_external_network_call": false,
+      "actual_external_service": null,
+      "local_deterministic_computation": true,
+      "local_playwright": false,
+      "not_configured_in_environment": false,
+      "evidence_identifier": "TOOL-CAP-inspect_attachment"
+    },
+    {
+      "tool_name": "quarantine_email",
+      "classification": "NOT_CONFIGURED",
+      "actual_external_network_call": false,
+      "actual_external_service": "M365 Graph / Okta / Corporate Firewall",
+      "local_deterministic_computation": false,
+      "local_playwright": false,
+      "not_configured_in_environment": true,
+      "evidence_identifier": "TOOL-CAP-quarantine_email"
+    },
+    {
+      "tool_name": "query_sender_history",
+      "classification": "DETERMINISTIC_LOCAL",
+      "actual_external_network_call": false,
+      "actual_external_service": null,
+      "local_deterministic_computation": true,
+      "local_playwright": false,
+      "not_configured_in_environment": false,
+      "evidence_identifier": "TOOL-CAP-query_sender_history"
+    },
+    {
+      "tool_name": "revoke_session",
+      "classification": "NOT_CONFIGURED",
+      "actual_external_network_call": false,
+      "actual_external_service": "M365 Graph / Okta / Corporate Firewall",
+      "local_deterministic_computation": false,
+      "local_playwright": false,
+      "not_configured_in_environment": true,
+      "evidence_identifier": "TOOL-CAP-revoke_session"
+    },
+    {
+      "tool_name": "search_mailbox_history",
+      "classification": "DETERMINISTIC_LOCAL",
+      "actual_external_network_call": false,
+      "actual_external_service": null,
+      "local_deterministic_computation": true,
+      "local_playwright": false,
+      "not_configured_in_environment": false,
+      "evidence_identifier": "TOOL-CAP-search_mailbox_history"
+    },
+    {
+      "tool_name": "threat_intel_lookup",
+      "classification": "DETERMINISTIC_LOCAL",
+      "actual_external_network_call": false,
+      "actual_external_service": "Local Threat Caches",
+      "local_deterministic_computation": true,
+      "local_playwright": false,
+      "not_configured_in_environment": false,
+      "evidence_identifier": "TOOL-CAP-threat_intel_lookup"
+    },
+    {
+      "tool_name": "url_sandbox_detonation",
+      "classification": "LIVE_LOCAL",
+      "actual_external_network_call": false,
+      "actual_external_service": "Local Playwright Chromium Sandbox",
+      "local_deterministic_computation": false,
+      "local_playwright": true,
+      "not_configured_in_environment": false,
+      "evidence_identifier": "TOOL-CAP-url_sandbox_detonation"
+    }
+  ]
+}

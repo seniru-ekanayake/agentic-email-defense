@@ -1,0 +1,123 @@
+{
+  "metadata": {
+    "title": "ENTERPRISE LIVE DISPATCH & CONTAINMENT SECURITY AUDIT",
+    "commit": "9c056d1e664a79f3b5c63cbc139e0fbf3c0ecf21",
+    "branch": "develop",
+    "timestamp": "2026-10-04T20:11:32.362960+00:00"
+  },
+  "live_endpoint_tests": {
+    "microsoft_graph": {
+      "endpoint": "https://graph.microsoft.com/v1.0/me/messages",
+      "method": "POST",
+      "action": "quarantine_email",
+      "auth_tested": "Bearer test-graph-token-audit",
+      "http_status": 401,
+      "status": "AUTH_FAILED",
+      "execution_state": "DISPATCH_FAILED",
+      "confirmed": false,
+      "raw_detail": "Gateway authentication failed with HTTP 401: {\"error\":{\"code\":\"InvalidAuthenticationToken\",\"message\":\"Protocol 'Bearer' failed to validate because The token could not be read.\",\"innerError\":{\"date\":\"2026-10-04T20:11:29\",\"request-id\":\"0d4d4658-8f"
+    },
+    "okta_idp": {
+      "endpoint": "https://dev-123456.okta.com/api/v1/users/user1/sessions",
+      "method": "POST",
+      "action": "revoke_session",
+      "auth_tested": "Bearer test-okta-token-audit",
+      "http_status": 405,
+      "status": "DISPATCH_FAILED",
+      "execution_state": "DISPATCH_FAILED",
+      "confirmed": false,
+      "raw_detail": "Gateway responded with HTTP 405: {\"errorCode\":\"E0000022\",\"errorSummary\":\"The endpoint does not support the provided HTTP method\",\"errorLink\":\"E0000022\",\"errorId\":\"oaex4yrfNQISVu0LWWDEnBNEQ\",\"errorCauses\":[]}"
+    },
+    "palo_alto_firewall": {
+      "endpoint": "https://api.paloaltonetworks.com/ioc/block",
+      "method": "POST",
+      "action": "block_ioc",
+      "auth_tested": "Bearer test-fw-token-audit",
+      "http_status": 404,
+      "status": "DISPATCH_FAILED",
+      "execution_state": "DISPATCH_FAILED",
+      "confirmed": false,
+      "raw_detail": "Gateway responded with HTTP 404: <!DOCTYPE html>\r\n<html>\r\n    <head>\r\n        <title>The resource cannot be found.</title>\r\n        <meta name=\"viewport\" content=\"width=device-width\" />\r\n        <style>\r\n         body {font-family:\"V"
+    }
+  },
+  "unconfigured_fail_closed_tests": {
+    "quarantine_email": {
+      "status": "NOT_CONFIGURED",
+      "execution_state": "DISPATCH_FAILED",
+      "confirmed": false,
+      "action": "quarantine_email",
+      "detail": "Integration endpoint URL for 'quarantine_email' is not configured in environment.",
+      "target": null,
+      "quarantined_count": 0
+    },
+    "revoke_session": {
+      "status": "NOT_CONFIGURED",
+      "execution_state": "DISPATCH_FAILED",
+      "confirmed": false,
+      "action": "revoke_session",
+      "detail": "Integration endpoint URL for 'revoke_session' is not configured in environment.",
+      "target_user": null,
+      "sessions_revoked": 0
+    },
+    "disable_account": {
+      "status": "NOT_CONFIGURED",
+      "execution_state": "DISPATCH_FAILED",
+      "confirmed": false,
+      "action": "disable_account",
+      "detail": "Integration endpoint URL for 'disable_account' is not configured in environment.",
+      "target_user": null,
+      "account_disabled": false
+    },
+    "block_sender": {
+      "status": "NOT_CONFIGURED",
+      "execution_state": "DISPATCH_FAILED",
+      "confirmed": false,
+      "action": "block_sender",
+      "detail": "Integration endpoint URL for 'block_sender' is not configured in environment.",
+      "target": null,
+      "entry_added": false
+    },
+    "block_ioc": {
+      "status": "NOT_CONFIGURED",
+      "execution_state": "DISPATCH_FAILED",
+      "confirmed": false,
+      "action": "block_ioc",
+      "detail": "Integration endpoint URL for 'block_ioc' is not configured in environment.",
+      "ioc": null,
+      "firewall_synced": false
+    },
+    "force_password_reset": {
+      "status": "NOT_CONFIGURED",
+      "execution_state": "DISPATCH_FAILED",
+      "confirmed": false,
+      "action": "force_password_reset",
+      "detail": "Integration endpoint URL for 'force_password_reset' is not configured in environment.",
+      "user_id": null,
+      "reset_flagged": false
+    }
+  },
+  "cross_tenant_isolation": {
+    "token": "APP-BEEAC7C1",
+    "tenant_a": "tenant-A",
+    "tenant_b_attempt_status": 403,
+    "tenant_b_response": {
+      "detail": "Access Denied: Approval token 'APP-BEEAC7C1' belongs to tenant 'tenant-A', not 'tenant-B'."
+    },
+    "tenant_a_approval_status": 200
+  },
+  "replay_protection": {
+    "token": "APP-BEEAC7C1",
+    "first_approval_status": 200,
+    "replay_status": 400,
+    "replay_response": {
+      "detail": "Invalid or expired approval token: APP-BEEAC7C1"
+    }
+  },
+  "expiration_protection": {
+    "token": "APP-EXP-01293A",
+    "status": 400,
+    "response": {
+      "detail": "Approval token 'APP-EXP-01293A' has expired."
+    }
+  }
+}
