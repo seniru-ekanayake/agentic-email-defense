@@ -225,6 +225,41 @@ class ToolRegistry:
             audit_id=res.get("audit_id", "")
         )
 
+
+    def _cisa_kev_handler(self, p: Dict[str, Any]) -> Dict[str, Any]:
+        """Dynamically loads and queries the CISA KEV JSON dataset."""
+        import json
+        import os
+        
+        cve_id = p.get("cve_id", "")
+        dataset_path = os.path.join(os.path.dirname(__file__), "data", "known_exploited_vulnerabilities.json")
+        
+        is_in_kev = False
+        catalog_version = "UNKNOWN"
+        
+        if os.path.exists(dataset_path):
+            try:
+                with open(dataset_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    catalog_version = data.get("catalogVersion", "UNKNOWN")
+                    for vuln in data.get("vulnerabilities", []):
+                        if vuln.get("cveID") == cve_id:
+                            is_in_kev = True
+                            break
+            except Exception:
+                pass
+                
+        return {
+            "status": "VERIFIED" if is_in_kev else "UNKNOWN",
+            "is_in_kev": is_in_kev,
+            "provenance": {
+                "source": "FISHINGMAILS_LOCAL_KEV_DB",
+                "catalog_version": catalog_version,
+                "dataset_path": dataset_path,
+                "match_rule": "EXACT_CVE_ID_MATCH"
+            }
+        }
+
     def _register_default_tools(self):
         """Registers the core platform tools."""
         
@@ -662,15 +697,7 @@ class ToolRegistry:
                 network_requirements="EXTERNAL_HTTPS",
                 failure_modes=["CATALOG_UNAVAILABLE", "CVE_NOT_FOUND"]
             ),
-            lambda p: {
-                "status": "VERIFIED" if p.get("cve_id") in ["CVE-2023-35636", "CVE-2024-21413"] else "UNKNOWN",
-                "is_in_kev": p.get("cve_id") in ["CVE-2023-35636", "CVE-2024-21413"],
-                "provenance": {
-                    "source": "FISHINGMAILS_LOCAL_KEV_DB",
-                    "catalog_version": "2023-12-01T00:00:00Z",
-                    "match_rule": "EXACT_CVE_ID_MATCH"
-                }
-            }
+            self._cisa_kev_handler
         )
 
         # 16. Tool Aliases for Flexible Dynamic Resolution
