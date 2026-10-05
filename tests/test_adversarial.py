@@ -45,7 +45,7 @@ def test_A_approval_auth_bypass():
     
     wrong_tenant_jwt = create_principal_token("user", "tenant-evil", ["SOC_ANALYST"])
     res = client.post(f"/api/v1/approve/{valid_token}", headers={"Authorization": f"Bearer {wrong_tenant_jwt}"})
-    assert res.status_code == 400
+    assert res.status_code == 403
     assert "Tenant mismatch" in res.text
     
     # Valid execution

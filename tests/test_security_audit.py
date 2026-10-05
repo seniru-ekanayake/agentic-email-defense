@@ -44,6 +44,8 @@ def test_cors_headers():
     assert response.headers.get("access-control-allow-origin") != "*"
 
 def test_mode_mutability_admin():
+    from apps.agents.core.production_manager import ProductionManager, PlatformMode
+    ProductionManager.get_instance().set_mode(PlatformMode.PRODUCTION)
     token = get_admin_token()
     response = client.post(
         "/api/v1/mode",
@@ -101,7 +103,7 @@ def test_approval_wrong_tenant():
         f"/api/v1/approve/{valid_token}",
         headers={"Authorization": f"Bearer {wrong_tenant_token}"}
     )
-    assert response.status_code == 400
+    assert response.status_code == 403
     assert "Tenant mismatch" in response.text
 
 def test_jwt_query_parameter_rejected():

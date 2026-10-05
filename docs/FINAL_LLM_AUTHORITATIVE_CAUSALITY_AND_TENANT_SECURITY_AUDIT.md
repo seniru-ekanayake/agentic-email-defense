@@ -54,7 +54,7 @@ return JSONResponse(content=incidents_db[:limit])
 ```
 
 ### 2.3 Tenant Security Regression Results
-The regression test suite `test_tenant_security_regression.py` verified:
+The regression test suite `scripts/audit/test_tenant_security_regression.py` verified:
 - **Test A (Query Param)**: `GET /api/v1/incidents?tenant_id=tenant-empty-test-999` -> Returned `[]` (PASS)
 - **Test B (Header)**: `GET /api/v1/incidents` (`X-Tenant-ID: tenant-empty-header-888`) -> Returned `[]` (PASS)
 - **Test C (Isolation)**: `GET /api/v1/incidents?tenant_id=tenant-enterprise-prod` -> Only records for `tenant-enterprise-prod` (PASS)

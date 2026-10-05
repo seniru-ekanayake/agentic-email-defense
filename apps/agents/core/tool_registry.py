@@ -219,7 +219,10 @@ class ToolRegistry:
         )
         
         if not res.get("success"):
-            raise ValueError(res.get("error", "Unknown approval error"))
+            err_msg = res.get("error", "Unknown approval error")
+            if "Tenant mismatch" in err_msg:
+                raise PermissionError(err_msg)
+            raise ValueError(err_msg)
             
         return ToolExecutionResult(
             tool_name=res.get("tool_name", "unknown"),
