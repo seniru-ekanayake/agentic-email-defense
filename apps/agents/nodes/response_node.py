@@ -87,11 +87,13 @@ class ResponseNode:
 
 
         # 2. Process proposals through ToolRegistry safety gates
+        incident_id = state.get("workflow_id") or state.get("incident_id")
         for prop in proposals:
             result = self.tool_registry.execute_proposal(
                 tenant_id=tenant_id,
                 proposal=prop,
-                autonomy_level=autonomy_level
+                autonomy_level=autonomy_level,
+                incident_id=incident_id
             )
 
             if result.executed:
@@ -102,6 +104,7 @@ class ResponseNode:
                     "parameters": prop.parameters,
                     "reasoning": prop.reasoning,
                     "approval_token": result.approval_token,
+                    "incident_id": incident_id,
                     "risk_level": "HIGH" if prop.tool_name == "revoke_session" else "MEDIUM"
                 })
 

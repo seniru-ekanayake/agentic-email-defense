@@ -12,35 +12,39 @@ import json
 import sqlite3
 import sys
 import time
+import threading
 from typing import Any, Dict
 
-# In-memory SQLite database initialized with baseline schema
-CONN = sqlite3.connect(":memory:")
+# Thread-safe in-memory SQLite database initialized with baseline schema
+_DB_LOCK = threading.RLock()
+CONN = sqlite3.connect(":memory:", check_same_thread=False)
 CONN.row_factory = sqlite3.Row
 
 
 def init_db():
-    with CONN:
-        CONN.execute("""
-            CREATE TABLE IF NOT EXISTS email_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                sender_email TEXT NOT NULL,
-                sender_domain TEXT NOT NULL,
-                recipient_email TEXT NOT NULL,
-                timestamp INTEGER NOT NULL,
-                auth_status TEXT NOT NULL,
-                subject_hash TEXT
-            )
-        """)
-        # Seed realistic baseline data for common enterprise domains
-        now = int(time.time())
-        CONN.execute("""
-            INSERT INTO email_history (sender_email, sender_domain, recipient_email, timestamp, auth_status, subject_hash)
-            VALUES 
-                ('billing@trusted-vendor.com', 'trusted-vendor.com', 'finance@victim-corp.com', ?, 'PASS', 'hash_01'),
-                ('hr@victim-corp.com', 'victim-corp.com', 'finance@victim-corp.com', ?, 'PASS', 'hash_02'),
-                ('ceo@victim-corp.com', 'victim-corp.com', 'finance@victim-corp.com', ?, 'PASS', 'hash_03')
-        """, (now - 86400 * 30, now - 86400 * 15, now - 86400 * 5))
+    with _DB_LOCK:
+        with CONN:
+            CONN.execute("""
+                CREATE TABLE IF NOT EXISTS email_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tenant_id TEXT NOT NULL DEFAULT 'default',
+                    sender_email TEXT NOT NULL,
+                    sender_domain TEXT NOT NULL,
+                    recipient_email TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL,
+                    auth_status TEXT NOT NULL,
+                    subject_hash TEXT
+                )
+            """)
+            # Seed realistic baseline data for common enterprise domains
+            now = int(time.time())
+            CONN.execute("""
+                INSERT INTO email_history (tenant_id, sender_email, sender_domain, recipient_email, timestamp, auth_status, subject_hash)
+                VALUES
+                    ('default', 'billing@trusted-vendor.com', 'trusted-vendor.com', 'finance@victim-corp.com', ?, 'PASS', 'hash_01'),
+                    ('default', 'hr@victim-corp.com', 'victim-corp.com', 'finance@victim-corp.com', ?, 'PASS', 'hash_02'),
+                    ('default', 'ceo@victim-corp.com', 'victim-corp.com', 'finance@victim-corp.com', ?, 'PASS', 'hash_03')
+            """, (now - 86400 * 30, now - 86400 * 15, now - 86400 * 5))
 
 
 init_db()
@@ -50,31 +54,50 @@ def handle_query_sender_history(params: Dict[str, Any]) -> Dict[str, Any]:
     sender_email = params.get("sender_email", "").strip().lower()
     recipient_email = params.get("recipient_email", "").strip().lower()
     sender_domain = params.get("sender_domain", "").strip().lower()
+    tenant_id = params.get("tenant_id", "").strip().lower()
 
     if not sender_domain and "@" in sender_email:
         sender_domain = sender_email.split("@")[1]
 
-    with CONN:
-        cur = CONN.cursor()
-        if recipient_email:
-            cur.execute("""
-                SELECT COUNT(*) as count, MIN(timestamp) as first_seen, MAX(timestamp) as last_seen
-                FROM email_history
-                WHERE (sender_email = ? OR sender_domain = ?) AND recipient_email = ?
-            """, (sender_email, sender_domain, recipient_email))
-        else:
-            cur.execute("""
-                SELECT COUNT(*) as count, MIN(timestamp) as first_seen, MAX(timestamp) as last_seen
-                FROM email_history
-                WHERE sender_email = ? OR sender_domain = ?
-            """, (sender_email, sender_domain))
+    with _DB_LOCK:
+        with CONN:
+            cur = CONN.cursor()
+            if tenant_id:
+                if recipient_email:
+                    cur.execute("""
+                        SELECT COUNT(*) as count, MIN(timestamp) as first_seen, MAX(timestamp) as last_seen
+                        FROM email_history
+                        WHERE (tenant_id = ? OR tenant_id = 'default')
+                          AND (sender_email = ? OR sender_domain = ?) AND recipient_email = ?
+                    """, (tenant_id, sender_email, sender_domain, recipient_email))
+                else:
+                    cur.execute("""
+                        SELECT COUNT(*) as count, MIN(timestamp) as first_seen, MAX(timestamp) as last_seen
+                        FROM email_history
+                        WHERE (tenant_id = ? OR tenant_id = 'default')
+                          AND (sender_email = ? OR sender_domain = ?)
+                    """, (tenant_id, sender_email, sender_domain))
+            else:
+                if recipient_email:
+                    cur.execute("""
+                        SELECT COUNT(*) as count, MIN(timestamp) as first_seen, MAX(timestamp) as last_seen
+                        FROM email_history
+                        WHERE (sender_email = ? OR sender_domain = ?) AND recipient_email = ?
+                    """, (sender_email, sender_domain, recipient_email))
+                else:
+                    cur.execute("""
+                        SELECT COUNT(*) as count, MIN(timestamp) as first_seen, MAX(timestamp) as last_seen
+                        FROM email_history
+                        WHERE sender_email = ? OR sender_domain = ?
+                    """, (sender_email, sender_domain))
 
-        row = cur.fetchone()
-        count = row["count"] if row else 0
-        first_seen = row["first_seen"] if row else None
-        last_seen = row["last_seen"] if row else None
+            row = cur.fetchone()
+            count = row["count"] if row else 0
+            first_seen = row["first_seen"] if row else None
+            last_seen = row["last_seen"] if row else None
 
     return {
+        "tenant_id": tenant_id or "default",
         "sender_email": sender_email,
         "sender_domain": sender_domain,
         "recipient_email": recipient_email,
@@ -91,15 +114,17 @@ def handle_record_interaction(params: Dict[str, Any]) -> Dict[str, Any]:
     recipient_email = params.get("recipient_email", "").strip().lower()
     auth_status = params.get("auth_status", "PASS")
     sender_domain = sender_email.split("@")[1] if "@" in sender_email else ""
+    tenant_id = params.get("tenant_id", "default").strip().lower()
     ts = int(params.get("timestamp", time.time()))
 
-    with CONN:
-        CONN.execute("""
-            INSERT INTO email_history (sender_email, sender_domain, recipient_email, timestamp, auth_status)
-            VALUES (?, ?, ?, ?, ?)
-        """, (sender_email, sender_domain, recipient_email, ts, auth_status))
+    with _DB_LOCK:
+        with CONN:
+            CONN.execute("""
+                INSERT INTO email_history (tenant_id, sender_email, sender_domain, recipient_email, timestamp, auth_status)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (tenant_id, sender_email, sender_domain, recipient_email, ts, auth_status))
 
-    return {"status": "recorded", "sender_email": sender_email, "recipient_email": recipient_email}
+    return {"status": "recorded", "tenant_id": tenant_id, "sender_email": sender_email, "recipient_email": recipient_email}
 
 
 TOOLS = {

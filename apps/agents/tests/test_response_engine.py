@@ -16,20 +16,64 @@ import unittest
 # Ensure root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")))
 
+import http.server
+import threading
+import json
 from apps.agents.core.tool_registry import ToolRegistry
 from apps.agents.core.response_policy_engine import ResponsePolicyEngine, TenantResponsePolicy
 from packages.schemas.python.models import ToolProposal, RiskLevel
 
 
+class MockGatewayHandler(http.server.BaseHTTPRequestHandler):
+    received_requests = []
+
+    def do_POST(self):
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length)
+        parsed = json.loads(body.decode("utf-8")) if body else {}
+        MockGatewayHandler.received_requests.append({
+            "path": self.path,
+            "headers": dict(self.headers),
+            "body": parsed
+        })
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(b'{"status": "CONFIRMED", "dispatch_id": "DISPATCH-12345"}')
+
+    def log_message(self, format, *args):
+        pass  # Suppress console logging during test run
+
+
 class TestResponseEngine(unittest.TestCase):
 
+    @classmethod
+    def setUpClass(cls):
+        cls.server = http.server.HTTPServer(("127.0.0.1", 0), MockGatewayHandler)
+        cls.port = cls.server.server_port
+        cls.server_thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.server_thread.start()
+        cls.base_url = f"http://127.0.0.1:{cls.port}/api/dispatch"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+
     def setUp(self):
-        os.environ["TEST_MODE"] = "1"
+        MockGatewayHandler.received_requests.clear()
+        os.environ["MAIL_GATEWAY_URL"] = self.base_url
+        os.environ["IDP_API_URL"] = self.base_url
+        os.environ["GATEWAY_BLOCK_URL"] = self.base_url
+        os.environ["ACTIVE_DIRECTORY_URL"] = self.base_url
+        os.environ["FIREWALL_API_URL"] = self.base_url
         self.tool_registry = ToolRegistry()
         self.policy_engine = ResponsePolicyEngine(tool_registry=self.tool_registry)
 
     def tearDown(self):
-        os.environ.pop("TEST_MODE", None)
+        for k in ["MAIL_GATEWAY_URL", "IDP_API_URL", "GATEWAY_BLOCK_URL", "ACTIVE_DIRECTORY_URL", "FIREWALL_API_URL", "TEST_MODE"]:
+            os.environ.pop(k, None)
+
 
 
     def test_autonomy_level_0_observe_only(self):
@@ -142,6 +186,8 @@ class TestResponseEngine(unittest.TestCase):
 
     def test_unconfigured_external_gateways_fail_closed(self):
         """When gateways are unconfigured and TEST_MODE is off, actions must transparently return NOT_CONFIGURED."""
+        os.environ.pop("MAIL_GATEWAY_URL", None)
+        os.environ.pop("M365_GRAPH_ENDPOINT", None)
         os.environ.pop("TEST_MODE", None)
         prop_quarantine = ToolProposal(
             tool_name="quarantine_email",

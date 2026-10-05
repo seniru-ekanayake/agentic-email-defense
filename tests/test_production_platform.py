@@ -15,10 +15,12 @@ import sys
 import unittest
 from fastapi.testclient import TestClient
 
-# Ensure root in sys.path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# Ensure test auth secret and env are configured
+os.environ.setdefault("FISHINGMAILS_ENV", "test")
+os.environ.setdefault("FISHINGMAILS_AUTH_SECRET", "fishingmails-prod-enterprise-agentic-jwt-signing-key-32bytes-min")
+os.environ.setdefault("FISHINGMAILS_APPROVAL_HMAC_SECRET", "test-hmac-secret-key-that-is-long-enough")
 
-from apps.server import app, investigation_service, prod_manager, incidents_db
+from apps.server import app, investigation_service, prod_manager
 from apps.agents.core.state_machine import AgentState, InvestigationStateMachine
 from apps.agents.core.event_system import EventStreamManager
 from apps.agents.core.integration_center import IntegrationManager, IntegrationStatus
@@ -31,7 +33,13 @@ from apps.agents.core.production_manager import PlatformMode
 class TestProductionPlatform(unittest.TestCase):
 
     def setUp(self):
-        self.client = TestClient(app)
+        from apps.agents.core.security_principal import create_principal_token
+        token = create_principal_token(
+            subject_id="test_analyst",
+            tenant_id="tenant-enterprise-prod",
+            roles=["SOC_ANALYST", "INCIDENT_RESPONDER", "ADMIN"]
+        )
+        self.client = TestClient(app, headers={"Authorization": f"Bearer {token}"})
         self.sample_path = "packages/email_parser/samples/synthetic_cve_2023_35636_rendering_exploit.eml"
 
     def test_production_mode_purity(self):

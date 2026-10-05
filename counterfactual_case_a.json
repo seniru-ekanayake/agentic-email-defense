@@ -1,0 +1,52 @@
+{
+  "metadata": {
+    "test_type": "COUNTERFACTUAL_CASE_A_MALICIOUS",
+    "incident_id": "INC-CF-CASE-A",
+    "commit": "a886a083cc1f1fdab5530e26336f33029cedf95a",
+    "branch": "develop",
+    "timestamp": "2026-10-04T20:04:19.901551+00:00"
+  },
+  "cycle_1_initial_state_hash": "753608c96effe0e3b894d62f5734ed84f2b6627788ffbf1128a2d61a3a64683b",
+  "cycle_2_adapted_state_hash": "345eb8670dd1443ffeea9c337de871e9a28f1ac8057dd6560f96b12b25b6aec9",
+  "divergent_fact": "E-04:URL_REPUTATION == MALICIOUS",
+  "cycle_2_decision": {
+    "action": "STOP",
+    "stop_reason": "SUFFICIENT_EVIDENCE",
+    "rationale": "All security questions have been conclusively resolved."
+  },
+  "full_trace": [
+    {
+      "cycle": 1,
+      "planner_input_state_hash": "753608c96effe0e3b894d62f5734ed84f2b6627788ffbf1128a2d61a3a64683b",
+      "evidence_before_planning": [
+        "E-01",
+        "E-02",
+        "E-03"
+      ],
+      "proposed_action": "RUN_TOOL",
+      "selected_tool": "ThreatIntelFeeds",
+      "tool_execution_id": "exec-ec98cad8",
+      "tool_result": "Reputation: MALICIOUS (URLhaus malware tag: Trojan-Spy)",
+      "new_evidence_created": {
+        "id": "E-04",
+        "type": "URL_REPUTATION",
+        "value": "MALICIOUS"
+      }
+    },
+    {
+      "cycle": 2,
+      "planner_input_state_hash": "345eb8670dd1443ffeea9c337de871e9a28f1ac8057dd6560f96b12b25b6aec9",
+      "evidence_before_planning": [
+        "E-01",
+        "E-02",
+        "E-03",
+        "E-04"
+      ],
+      "proposed_action": "STOP",
+      "selected_tool": null,
+      "stop_reason": "SUFFICIENT_EVIDENCE",
+      "rationale": "All security questions have been conclusively resolved.",
+      "confidence": 0.95
+    }
+  ]
+}

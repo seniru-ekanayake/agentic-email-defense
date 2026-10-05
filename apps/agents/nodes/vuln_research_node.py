@@ -68,7 +68,12 @@ class VulnResearchNode:
                     merged_dict = base_assessment.model_dump()
                     if llm_resp.actual_call and llm_resp.status == "COMPLETED" and llm_resp.structured_json:
                         if "interaction_required" in llm_resp.structured_json:
-                            merged_dict["interaction_required"] = llm_resp.structured_json["interaction_required"]
+                            raw_ir = str(llm_resp.structured_json["interaction_required"]).upper()
+                            valid_ir = {"NONE", "VIEW", "HOVER", "CLICK", "OPEN_ATTACHMENT", "EXECUTE_ATTACHMENT", "MULTI_STEP"}
+                            if raw_ir in valid_ir:
+                                merged_dict["interaction_required"] = raw_ir
+                            elif "PREVIEW" in raw_ir or "READ" in raw_ir:
+                                merged_dict["interaction_required"] = "VIEW"
                         merged_dict["assessment_engine"] = "HYBRID"
                     else:
                         merged_dict["assessment_engine"] = "RULE_ENGINE"

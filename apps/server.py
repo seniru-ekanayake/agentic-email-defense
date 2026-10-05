@@ -42,6 +42,13 @@ from apps.agents.core.agent_builder import ZeroCodeStore, AgentConfig, Detection
 from apps.agents.core.system_selftest import SystemSelfTester
 from apps.agents.core.trust_score import TrustScoreCalculator
 from apps.agents.core.production_manager import ProductionManager, PlatformMode
+from apps.agents.core.security_principal import (
+    AuthenticatedPrincipal,
+    get_authenticated_principal,
+    resolve_authorized_tenant,
+    create_principal_token,
+    is_production_mode
+)
 
 app = FastAPI(
     title="FishingMails — Production Zero-Code Autonomous Platform",
@@ -51,7 +58,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:3000", "http://localhost:8000", "https://app.fishingmails.example"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -79,12 +86,28 @@ def record_audit_event(actor: str, action: str, details: Optional[Dict[str, Any]
     audit_log_store.append(entry)
     investigation_service.durable_storage.record_audit_log(actor=actor, action=action, details=entry)
 
-# Active incident store: In PRODUCTION mode, starts clean with ZERO fake incidents!
-incidents_db: List[Dict[str, Any]] = []
+
 
 # Mount static assets if directory exists
 if os.path.exists("assets"):
     app.mount("/assets", StaticFiles(directory="assets"), name="assets")
+
+
+# ============================================================================
+# STARTUP VALIDATION GATE
+# ============================================================================
+
+@app.on_event("startup")
+async def startup_security_gate():
+    """Validates production security configuration on startup (fails closed)."""
+    from apps.agents.core.security_principal import (
+        get_environment,
+        get_jwt_secret_key,
+        is_local_auth_fallback_enabled,
+    )
+    get_environment()
+    get_jwt_secret_key()
+    is_local_auth_fallback_enabled()
 
 
 # ============================================================================
@@ -99,14 +122,24 @@ async def get_platform_mode():
 
 @app.post("/api/v1/mode")
 async def set_platform_mode(request: Request):
-    """Switches platform mode."""
+    """Switches platform mode with authenticated principal verification."""
+    principal = get_authenticated_principal(request)
+    
+    # Enforce ADMIN role
+    if "ADMIN" not in principal.roles and "SOC_ADMIN" not in principal.roles:
+        raise HTTPException(status_code=403, detail="Only administrators can change platform mode.")
+        
+    # Enforce production immutability
+    if prod_manager.is_production():
+        raise HTTPException(status_code=403, detail="Platform mode is immutable once set to PRODUCTION.")
+
     body = await request.json()
     new_mode_str = body.get("mode", "PRODUCTION").upper()
     try:
         new_mode = PlatformMode(new_mode_str)
         prod_manager.set_mode(new_mode)
         record_audit_event(
-            actor="SOC_ADMIN",
+            actor=principal.subject_id,
             action="SET_PLATFORM_MODE",
             details={"mode": new_mode.value}
         )
@@ -115,60 +148,127 @@ async def set_platform_mode(request: Request):
         raise HTTPException(status_code=400, detail=f"Invalid mode: {new_mode_str}")
 
 
+@app.post("/api/v1/auth/token")
+async def obtain_token(request: Request):
+    """
+    Direct token issuance endpoint.
+    IN PRODUCTION: Strictly DISABLED. Production tokens MUST originate from an authoritative
+    enterprise identity provider (IdP). Unauthenticated callers receive HTTP 401 Unauthorized,
+    and authenticated callers receive HTTP 403 Forbidden.
+    IN DEVELOPMENT / TEST: Controlled minting permitted for testing identities with strictly bounded claims.
+    """
+    if is_production_mode():
+        # First verify authentication: unauthenticated callers fail with HTTP 401
+        principal = get_authenticated_principal(request)
+        # Authenticated callers in production cannot mint arbitrary tokens: HTTP 403
+        raise HTTPException(
+            status_code=403,
+            detail="Direct token minting is disabled in PRODUCTION mode. Use enterprise IdP."
+        )
+
+    # In DEVELOPMENT / TEST mode:
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    subject_id = body.get("subject_id", "analyst_alpha")
+    tenant_id = body.get("tenant_id", "tenant-enterprise-prod")
+    roles = body.get("roles", ["SOC_ANALYST"])
+    requested_exp = body.get("expires_in", 86400)
+
+    # Securely bound expiration (max 24 hours / 86400 seconds)
+    if not isinstance(requested_exp, (int, float)) or requested_exp <= 0 or requested_exp > 86400:
+        requested_exp = 86400
+
+    # Whitelist allowed roles in test/dev mode
+    ALLOWED_ROLES = {"SOC_ANALYST", "INCIDENT_RESPONDER", "SOC_ADMIN", "ADMIN"}
+    if isinstance(roles, list):
+        sanitized_roles = [r for r in roles if r in ALLOWED_ROLES]
+    else:
+        sanitized_roles = []
+    if not sanitized_roles:
+        sanitized_roles = ["SOC_ANALYST"]
+
+    token = create_principal_token(
+        subject_id=str(subject_id)[:64],
+        tenant_id=str(tenant_id)[:64],
+        roles=sanitized_roles,
+        expires_in_seconds=int(requested_exp)
+    )
+    return JSONResponse(content={
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_in": int(requested_exp),
+        "tenant_id": tenant_id,
+        "subject_id": subject_id
+    })
+
+
 @app.get("/api/v1/incidents")
-async def get_incidents():
-    """Returns active incident ledger. Backed by durable SQLite storage."""
-    durable_incidents = investigation_service.list_incidents()
-    if durable_incidents:
-        return JSONResponse(content=[i.model_dump() for i in durable_incidents])
-    return JSONResponse(content=incidents_db)
+async def get_incidents(request: Request):
+    """Returns active incident ledger for the authenticated principal's tenant."""
+    principal = get_authenticated_principal(request)
+    tenant_id = resolve_authorized_tenant(request, principal)
+
+    limit_param = request.query_params.get("limit")
+    limit = int(limit_param) if limit_param and limit_param.isdigit() else 100
+    durable_incidents = investigation_service.list_incidents(tenant_id=tenant_id, limit=limit)
+    return JSONResponse(content=[i.model_dump() for i in durable_incidents])
 
 
 @app.get("/api/v1/incidents/{incident_id}")
 async def get_incident_detail(incident_id: str, request: Request):
-    """Retrieves deep forensic details for a specific incident from durable storage with tenant isolation."""
-    tenant_id = request.headers.get("X-Tenant-ID") or request.query_params.get("tenant_id")
+    """Retrieves deep forensic details for a specific incident from durable storage with strict tenant authorization."""
+    principal = get_authenticated_principal(request)
+    tenant_id = resolve_authorized_tenant(request, principal)
+
     try:
         inc = investigation_service.get_incident(incident_id, tenant_id=tenant_id)
         if inc:
             return JSONResponse(content=inc.model_dump())
     except PermissionError as pe:
         raise HTTPException(status_code=403, detail=str(pe))
-    for inc_mem in incidents_db:
-        if inc_mem.get("incident_id") == incident_id:
-            if tenant_id and inc_mem.get("tenant_id") != tenant_id:
-                raise HTTPException(status_code=403, detail="Access denied: Tenant mismatch.")
-            return JSONResponse(content=inc_mem)
     raise HTTPException(status_code=404, detail="Incident not found")
 
 
 @app.post("/api/v1/investigate")
 async def investigate_email(
+    request: Request,
     file: UploadFile = File(...),
-    tenant_id: str = Form("tenant-enterprise-prod")
+    tenant_id: Optional[str] = Form(None)
 ):
     """
     Genuine zero-code ingestion: Reads raw EML bytes, executes the 6-stage agent reasoning
     pipeline, and generates complete evidence records, decision traces, and telemetry.
+    Tenant context is authoritatively derived from the authenticated principal.
     """
+    principal = get_authenticated_principal(request)
+    if tenant_id and tenant_id != principal.tenant_id:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Access Denied: Authenticated identity '{principal.subject_id}' belongs to tenant '{principal.tenant_id}', not '{tenant_id}'."
+        )
+    authorized_tenant = principal.tenant_id
+
     raw_eml = await file.read()
     if not raw_eml:
         raise HTTPException(status_code=400, detail="Empty email payload uploaded.")
 
     incident: ComprehensiveIncidentRecord = investigation_service.run_investigation(
-        tenant_id=tenant_id,
+        tenant_id=authorized_tenant,
         raw_eml=raw_eml,
         autonomy_level=1,
         source_filename=file.filename or "uploaded_email.eml"
     )
 
     incident_dict = incident.model_dump()
-    incidents_db.insert(0, incident_dict)
 
     record_audit_event(
-        actor="INGESTION_AGENT",
+        actor=principal.subject_id,
         action="INVESTIGATION_COMPLETED",
         details={
+            "tenant_id": authorized_tenant,
             "incident_id": incident.incident_id,
             "risk_score": incident.overall_risk_score,
             "severity": incident.severity
@@ -179,8 +279,18 @@ async def investigate_email(
 
 
 @app.get("/api/v1/investigations/{incident_id}/events")
-async def stream_investigation_events(incident_id: str):
-    """Streams real-time Server-Sent Events (SSE) for an active or completed investigation."""
+async def stream_investigation_events(incident_id: str, request: Request):
+    """Streams real-time Server-Sent Events (SSE) with strict identity-bound tenant authorization."""
+    principal = get_authenticated_principal(request)
+    tenant_id = resolve_authorized_tenant(request, principal)
+
+    try:
+        inc = investigation_service.get_incident(incident_id, tenant_id=tenant_id)
+        if not inc:
+            raise HTTPException(status_code=403, detail=f"Access denied: Incident '{incident_id}' not found or belongs to another tenant.")
+    except PermissionError as pe:
+        raise HTTPException(status_code=403, detail=str(pe))
+
     async def sse_generator():
         async for event in event_manager.subscribe(incident_id):
             yield event.to_sse_payload()
@@ -197,9 +307,14 @@ async def stream_investigation_events(incident_id: str):
 
 
 @app.post("/api/v1/investigations/{incident_id}/pause")
-async def pause_investigation(incident_id: str):
-    """Pauses an active investigation."""
-    inc = investigation_service.get_incident(incident_id)
+async def pause_investigation(incident_id: str, request: Request):
+    """Pauses an active investigation with tenant authorization."""
+    principal = get_authenticated_principal(request)
+    tenant_id = resolve_authorized_tenant(request, principal)
+    try:
+        inc = investigation_service.get_incident(incident_id, tenant_id=tenant_id)
+    except PermissionError as pe:
+        raise HTTPException(status_code=403, detail=str(pe))
     if not inc:
         raise HTTPException(status_code=404, detail="Investigation not found")
     event_manager.publish_event(
@@ -214,9 +329,14 @@ async def pause_investigation(incident_id: str):
 
 
 @app.post("/api/v1/investigations/{incident_id}/resume")
-async def resume_investigation(incident_id: str):
-    """Resumes a paused investigation."""
-    inc = investigation_service.get_incident(incident_id)
+async def resume_investigation(incident_id: str, request: Request):
+    """Resumes a paused investigation with tenant authorization."""
+    principal = get_authenticated_principal(request)
+    tenant_id = resolve_authorized_tenant(request, principal)
+    try:
+        inc = investigation_service.get_incident(incident_id, tenant_id=tenant_id)
+    except PermissionError as pe:
+        raise HTTPException(status_code=403, detail=str(pe))
     if not inc:
         raise HTTPException(status_code=404, detail="Investigation not found")
     event_manager.publish_event(
@@ -231,9 +351,14 @@ async def resume_investigation(incident_id: str):
 
 
 @app.post("/api/v1/investigations/{incident_id}/cancel")
-async def cancel_investigation(incident_id: str):
-    """Cancels an active investigation."""
-    inc = investigation_service.get_incident(incident_id)
+async def cancel_investigation(incident_id: str, request: Request):
+    """Cancels an active investigation with tenant authorization."""
+    principal = get_authenticated_principal(request)
+    tenant_id = resolve_authorized_tenant(request, principal)
+    try:
+        inc = investigation_service.get_incident(incident_id, tenant_id=tenant_id)
+    except PermissionError as pe:
+        raise HTTPException(status_code=403, detail=str(pe))
     if not inc:
         raise HTTPException(status_code=404, detail="Investigation not found")
     event_manager.publish_event(
@@ -248,21 +373,33 @@ async def cancel_investigation(incident_id: str):
 
 
 @app.post("/api/v1/investigations/{incident_id}/replay")
-async def replay_investigation(incident_id: str):
-    """Returns recorded execution events for zero-distortion historical replay."""
+async def replay_investigation(incident_id: str, request: Request):
+    """Returns recorded execution events for zero-distortion historical replay with tenant authorization."""
+    principal = get_authenticated_principal(request)
+    tenant_id = resolve_authorized_tenant(request, principal)
+    try:
+        inc = investigation_service.get_incident(incident_id, tenant_id=tenant_id)
+    except PermissionError as pe:
+        raise HTTPException(status_code=403, detail=str(pe))
+    if not inc:
+        raise HTTPException(status_code=404, detail="Investigation not found")
     events = event_manager.get_events(incident_id)
     if not events:
-        inc = investigation_service.get_incident(incident_id)
         if inc and inc.events:
             events = inc.events
     return JSONResponse(content=[e.model_dump() for e in events])
 
 
 @app.get("/api/v1/investigations/compare")
-async def compare_investigations(id_a: str, id_b: str):
-    """Fulfills Requirement 13: Side-by-side comparison of two investigations."""
-    inc_a = investigation_service.get_incident(id_a) or next((i for i in incidents_db if i["incident_id"] == id_a), None)
-    inc_b = investigation_service.get_incident(id_b) or next((i for i in incidents_db if i["incident_id"] == id_b), None)
+async def compare_investigations(id_a: str, id_b: str, request: Request):
+    """Fulfills Requirement 13: Side-by-side comparison of two investigations with tenant authorization."""
+    principal = get_authenticated_principal(request)
+    tenant_id = resolve_authorized_tenant(request, principal)
+    try:
+        inc_a = investigation_service.get_incident(id_a, tenant_id=tenant_id)
+        inc_b = investigation_service.get_incident(id_b, tenant_id=tenant_id)
+    except PermissionError as pe:
+        raise HTTPException(status_code=403, detail=str(pe))
 
     if not inc_a or not inc_b:
         raise HTTPException(status_code=404, detail="One or both investigations could not be found.")
@@ -301,19 +438,22 @@ async def compare_investigations(id_a: str, id_b: str):
 
 
 @app.get("/api/v1/integrations")
-async def list_integrations():
-    """Requirement 2: Zero-Code Integration Center."""
+async def list_integrations(request: Request):
+    """Requirement 2: Zero-Code Integration Center with principal authentication."""
+    principal = get_authenticated_principal(request)
     return JSONResponse(content=integration_manager.list_integrations())
 
 
 @app.post("/api/v1/integrations/{integration_id}")
 async def update_integration(integration_id: str, request: Request):
-    """Updates integration parameters and runs immediate live health verification."""
+    """Updates integration parameters and runs immediate live health verification with authentication."""
+    principal = get_authenticated_principal(request)
     body = await request.json()
     enabled = body.get("enabled", True)
     config = body.get("config", {})
+    rec = integration_manager.configure_integration(integration_id, enabled, config)
     record_audit_event(
-        actor="SOC_ADMIN",
+        actor=principal.subject_id,
         action="CONFIGURED_INTEGRATION",
         details={
             "integration_id": integration_id,
@@ -324,21 +464,24 @@ async def update_integration(integration_id: str, request: Request):
 
 
 @app.post("/api/v1/integrations/{integration_id}/health")
-async def test_integration_health(integration_id: str):
-    """Executes a real TCP/DNS/HTTP probe against the configured integration."""
+async def test_integration_health(integration_id: str, request: Request):
+    """Executes a real TCP/DNS/HTTP probe against the configured integration with authentication."""
+    principal = get_authenticated_principal(request)
     rec = integration_manager.test_health(integration_id)
     return JSONResponse(content=rec.model_dump())
 
 
 @app.get("/api/v1/agent-config")
-async def get_agent_configs():
-    """Requirement 3: Zero-Code Agent Builder."""
+async def get_agent_configs(request: Request):
+    """Requirement 3: Zero-Code Agent Builder with authentication."""
+    principal = get_authenticated_principal(request)
     return JSONResponse(content=[a.model_dump() for a in zerocode_store.list_agents()])
 
 
 @app.post("/api/v1/agent-config")
 async def save_agent_config(request: Request):
-    """Saves visual agent configuration."""
+    """Saves visual agent configuration with authentication."""
+    principal = get_authenticated_principal(request)
     body = await request.json()
     cfg = AgentConfig(**body)
     saved = zerocode_store.save_agent(cfg)
@@ -346,14 +489,16 @@ async def save_agent_config(request: Request):
 
 
 @app.get("/api/v1/detection-rules")
-async def list_detection_rules():
-    """Requirement 18: Zero-Code Detection Rule Builder."""
+async def list_detection_rules(request: Request):
+    """Requirement 18: Zero-Code Detection Rule Builder with authentication."""
+    principal = get_authenticated_principal(request)
     return JSONResponse(content=[r.model_dump() for r in zerocode_store.list_rules()])
 
 
 @app.post("/api/v1/detection-rules")
 async def save_detection_rule(request: Request):
-    """Saves visual WHEN/AND/THEN rule."""
+    """Saves visual WHEN/AND/THEN rule with authentication."""
+    principal = get_authenticated_principal(request)
     body = await request.json()
     rule = DetectionRule(**body)
     saved = zerocode_store.save_rule(rule)
@@ -361,14 +506,16 @@ async def save_detection_rule(request: Request):
 
 
 @app.get("/api/v1/workflows")
-async def list_workflows():
-    """Requirement 19: Zero-Code Investigation Workflow Builder."""
+async def list_workflows(request: Request):
+    """Requirement 19: Zero-Code Investigation Workflow Builder with authentication."""
+    principal = get_authenticated_principal(request)
     return JSONResponse(content=[w.model_dump() for w in zerocode_store.list_workflows()])
 
 
 @app.post("/api/v1/workflows")
 async def save_workflow(request: Request):
-    """Saves visual node workflow canvas."""
+    """Saves visual node workflow canvas with authentication."""
+    principal = get_authenticated_principal(request)
     body = await request.json()
     wf = InvestigationWorkflow(**body)
     saved = zerocode_store.save_workflow(wf)
@@ -400,26 +547,42 @@ async def get_system_health():
 
 
 @app.get("/api/v1/trust-score")
-async def get_agent_trust_score():
-    """Requirement 29: Agent Trust Score metric."""
-    if incidents_db:
-        latest = incidents_db[0]
-        ts = latest.get("trust_score")
+async def get_agent_trust_score(request: Request):
+    """Requirement 29: Agent Trust Score metric with tenant authorization."""
+    principal = get_authenticated_principal(request)
+    tenant_id = resolve_authorized_tenant(request, principal)
+    tenant_incidents = investigation_service.list_incidents(tenant_id=tenant_id, limit=5)
+    if tenant_incidents:
+        latest = tenant_incidents[0]
+        ts = getattr(latest, "trust_score", None)
         if ts:
-            return JSONResponse(content=ts)
-    # Default baseline trust score
+            return JSONResponse(content=ts if isinstance(ts, dict) else ts.model_dump())
     calc = TrustScoreCalculator.calculate(12, [{"claim": "Baseline"}], [{"tool": "MimeParser"}], [{"decision": "Parse"}], 3)
     return JSONResponse(content=calc.model_dump())
 
 
 @app.post("/api/v1/approve/{token}")
-async def approve_containment(token: str):
-    """Requirement 20: Human-in-the-loop authorization approval."""
-    result = tool_registry.approve_and_execute(approval_token=token, approver_user_id="lead_analyst")
+async def approve_containment(token: str, request: Request):
+    """Requirement 20: Human-in-the-loop authorization approval with identity-bound tenant verification."""
+    principal = get_authenticated_principal(request)
+    approver_tenant = principal.tenant_id
+
+    try:
+        result = tool_registry.approve_and_execute(
+            approval_token=token,
+            approver_user_id=principal.subject_id,
+            approver_tenant_id=approver_tenant
+        )
+    except PermissionError as pe:
+        raise HTTPException(status_code=403, detail=str(pe))
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+
     record_audit_event(
-        actor="lead_analyst",
+        actor=principal.subject_id,
         action="APPROVED_CONTAINMENT",
         details={
+            "tenant_id": approver_tenant,
             "token": token,
             "executed": result.executed,
             "tool_name": result.tool_name
@@ -431,34 +594,95 @@ async def approve_containment(token: str):
 
 
 @app.post("/api/v1/reject/{token}")
-async def reject_containment(token: str):
-    """Requirement 20: Human rejection of proposed containment."""
+async def reject_containment(token: str, request: Request):
+    """Requirement 20: Human rejection of proposed containment with identity-bound tenant verification."""
+    principal = get_authenticated_principal(request)
+    approver_tenant = principal.tenant_id
+
+    # Check token ownership in tool_registry or durable storage
+    pending = tool_registry._pending_approvals.get(token)
+    if not pending:
+        try:
+            from apps.agents.core.durable_storage import DurableStorage
+            stored = DurableStorage.get_instance().get_approval_token(token)
+            if stored and stored.get("status") == "PENDING":
+                pending = {
+                    "tenant_id": stored.get("tenant_id"),
+                    "incident_id": stored.get("incident_id"),
+                    "tool_name": stored.get("action_name"),
+                    "parameters": stored.get("parameters", {}),
+                    "reasoning": stored.get("reasoning", "")
+                }
+        except Exception:
+            pass
+
+    if pending:
+        token_tenant = pending.get("tenant_id")
+        if token_tenant and token_tenant != approver_tenant:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Access Denied: Approval token '{token}' belongs to tenant '{token_tenant}', not '{approver_tenant}'."
+            )
+        tool_registry._pending_approvals.pop(token, None)
+        try:
+            from apps.agents.core.durable_storage import DurableStorage
+            stored = DurableStorage.get_instance().get_approval_token(token)
+            if stored:
+                stored["status"] = "REJECTED"
+                stored["approver"] = principal.subject_id
+                DurableStorage.get_instance().save_approval_token(stored)
+        except Exception:
+            pass
+    else:
+        # Check if already processed or invalid
+        raise HTTPException(status_code=400, detail=f"Invalid or expired approval token: {token}")
+
     record_audit_event(
-        actor="lead_analyst",
+        actor=principal.subject_id,
         action="REJECTED_CONTAINMENT",
-        details={"token": token}
+        details={"tenant_id": approver_tenant, "token": token}
     )
     return JSONResponse(content={"status": "REJECTED", "message": f"Proposal {token} was rejected by analyst."})
 
 
 @app.post("/api/v1/request-info/{token}")
-async def request_more_investigation(token: str):
-    """Requirement 20: Analyst requests more forensic investigation before approving."""
+async def request_more_investigation(token: str, request: Request):
+    """Requirement 20: Analyst requests more forensic investigation before approving with tenant check."""
+    principal = get_authenticated_principal(request)
+    approver_tenant = principal.tenant_id
+
+    pending = tool_registry._pending_approvals.get(token)
+    if pending:
+        token_tenant = pending.get("tenant_id")
+        if token_tenant and token_tenant != approver_tenant:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Access Denied: Approval token '{token}' belongs to tenant '{token_tenant}', not '{approver_tenant}'."
+            )
+    else:
+        raise HTTPException(status_code=400, detail=f"Invalid or expired approval token: {token}")
+
     record_audit_event(
-        actor="lead_analyst",
+        actor=principal.subject_id,
         action="REQUESTED_MORE_INVESTIGATION",
-        details={"token": token}
+        details={"tenant_id": approver_tenant, "token": token}
     )
     return JSONResponse(content={"status": "INVESTIGATION_REQUESTED", "message": "Dispatched secondary forensic telemetry query."})
 
 
 @app.get("/api/v1/audit-logs")
-async def get_audit_logs():
-    """Returns permanent immutable audit logs backed by durable SQLite storage."""
+async def get_audit_logs(request: Request):
+    """Returns permanent immutable audit logs backed by durable SQLite storage, scoped to authorized tenant."""
+    principal = get_authenticated_principal(request)
+    tenant_id = resolve_authorized_tenant(request, principal)
     durable_logs = investigation_service.durable_storage.get_audit_logs()
-    if durable_logs:
-        return JSONResponse(content=durable_logs)
-    return JSONResponse(content=audit_log_store)
+    source_logs = durable_logs if durable_logs else audit_log_store
+    tenant_logs = [
+        l for l in source_logs
+        if l.get("tenant_id") == tenant_id or
+           (isinstance(l.get("details"), dict) and l["details"].get("tenant_id") == tenant_id)
+    ]
+    return JSONResponse(content=tenant_logs)
 
 
 @app.get("/api/v1/demo")
@@ -485,7 +709,6 @@ async def run_demo_sample():
     )
     incident_dict = incident.model_dump()
     incident_dict["title"] = "[DEMO FIXTURE] " + incident_dict["title"]
-    incidents_db.insert(0, incident_dict)
     return JSONResponse(content=incident_dict)
 
 

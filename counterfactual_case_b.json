@@ -1,0 +1,52 @@
+{
+  "metadata": {
+    "test_type": "COUNTERFACTUAL_CASE_B_UNKNOWN",
+    "incident_id": "INC-CF-CASE-B",
+    "commit": "a886a083cc1f1fdab5530e26336f33029cedf95a",
+    "branch": "develop",
+    "timestamp": "2026-10-04T20:04:19.901551+00:00"
+  },
+  "cycle_1_initial_state_hash": "753608c96effe0e3b894d62f5734ed84f2b6627788ffbf1128a2d61a3a64683b",
+  "cycle_2_adapted_state_hash": "d97dc091c2e180314bf7b932b3a2919c6d0f3508717475126147a7edd45d6473",
+  "divergent_fact": "E-04:URL_REPUTATION == UNKNOWN",
+  "cycle_2_decision": {
+    "action": "RUN_TOOL",
+    "selected_tool": "UrlSandboxRunner",
+    "rationale": "UrlSandboxRunner performs DOM/JS isolation rendering to trace multi-hop redirects and login forms."
+  },
+  "full_trace": [
+    {
+      "cycle": 1,
+      "planner_input_state_hash": "753608c96effe0e3b894d62f5734ed84f2b6627788ffbf1128a2d61a3a64683b",
+      "evidence_before_planning": [
+        "E-01",
+        "E-02",
+        "E-03"
+      ],
+      "proposed_action": "RUN_TOOL",
+      "selected_tool": "ThreatIntelFeeds",
+      "tool_execution_id": "exec-a0f679de",
+      "tool_result": "Reputation: UNKNOWN / NO_RECORDS_FOUND",
+      "new_evidence_created": {
+        "id": "E-04",
+        "type": "URL_REPUTATION",
+        "value": "UNKNOWN"
+      }
+    },
+    {
+      "cycle": 2,
+      "planner_input_state_hash": "d97dc091c2e180314bf7b932b3a2919c6d0f3508717475126147a7edd45d6473",
+      "evidence_before_planning": [
+        "E-01",
+        "E-02",
+        "E-03",
+        "E-04"
+      ],
+      "proposed_action": "RUN_TOOL",
+      "selected_tool": "UrlSandboxRunner",
+      "expected_information_gain": 0.88,
+      "rationale": "UrlSandboxRunner performs DOM/JS isolation rendering to trace multi-hop redirects and login forms.",
+      "confidence": 0.9760000000000001
+    }
+  ]
+}
