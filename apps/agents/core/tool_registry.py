@@ -204,7 +204,12 @@ class ToolRegistry:
         am = ApprovalManager.get_instance()
         
         if not approver_tenant_id:
-            raise PermissionError("Tenant ID must be provided to approve action.")
+            token_data = am.storage.get_approval_token(approval_token)
+            if not token_data:
+                raise ValueError(f"Invalid or unknown approval token: '{approval_token}'")
+            approver_tenant_id = token_data.get("tenant_id")
+            if not approver_tenant_id:
+                raise PermissionError("Tenant ID must be provided to approve action.")
             
         res = am.authorize_and_execute(
             tenant_id=approver_tenant_id,

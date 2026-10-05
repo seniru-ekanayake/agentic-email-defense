@@ -24,16 +24,25 @@ from apps.agents.core.durable_storage import DurableStorage
 
 logger = logging.getLogger("core.approval_manager")
 
-# Secret key for HMAC token signing (in production, loaded from environment or HSM)
-HMAC_SECRET_KEY = os.getenv("FISHINGMAILS_APPROVAL_HMAC_SECRET")
-if not HMAC_SECRET_KEY:
-    # Explicit startup failure in production
+def get_hmac_secret_key() -> bytes:
+    """
+    Retrieves and validates the HMAC approval signing secret.
+    In PRODUCTION mode:
+    - Must be explicitly set via FISHINGMAILS_APPROVAL_HMAC_SECRET.
+    - If missing, fails closed with RuntimeError.
+    In DEVELOPMENT / TEST / DEMO mode:
+    - Defaults to safe development HMAC secret if unset.
+    """
+    secret = os.getenv("FISHINGMAILS_APPROVAL_HMAC_SECRET", "").strip()
     from apps.agents.core.production_manager import ProductionManager
     if ProductionManager.get_instance().is_production():
-        raise RuntimeError("FATAL SECURITY CONFIGURATION ERROR: FISHINGMAILS_APPROVAL_HMAC_SECRET is required in production.")
-    HMAC_SECRET_KEY = b"fishingmails-dev-approval-secret-key-v1"
-else:
-    HMAC_SECRET_KEY = HMAC_SECRET_KEY.encode("utf-8")
+        if not secret:
+            raise RuntimeError("FATAL SECURITY CONFIGURATION ERROR: FISHINGMAILS_APPROVAL_HMAC_SECRET is required in production.")
+        return secret.encode("utf-8")
+    if not secret:
+        return b"fishingmails-dev-approval-secret-key-v1"
+    return secret.encode("utf-8")
+
 
 
 class PendingApproval(BaseModel):
@@ -70,7 +79,10 @@ class ApprovalManager:
     def __init__(self, tool_registry: Optional[ToolRegistry] = None, storage: Optional[DurableStorage] = None):
         self.tool_registry = tool_registry or ToolRegistry()
         self.storage = storage or DurableStorage.get_instance()
-        self.secret_key = HMAC_SECRET_KEY
+
+    @property
+    def secret_key(self) -> bytes:
+        return get_hmac_secret_key()
 
     @classmethod
     def get_instance(cls) -> ApprovalManager:
@@ -239,5 +251,8 @@ class ApprovalManager:
         return [PendingApproval(**r) for r in records]
 
     def clear(self) -> None:
-        """Clear memory cache (durable storage records remain)."""
-        pass
+        """Clear pending approvals for test isolation."""
+        conn = self.storage._get_connection()
+        with conn:
+            conn.execute("DELETE FROM approval_tokens WHERE tenant_id LIKE 'tenant-stream%' OR tenant_id LIKE 'tenant-test%'")
+
