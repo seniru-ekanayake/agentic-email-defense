@@ -128,15 +128,44 @@ class UrlSandboxRunner:
             import requests
             try:
                 session = requests.Session()
-                # Enforce NetworkGuard redirect hook
-                resp = session.get(
-                    final_destination,
-                    timeout=3.0,
-                    headers={"User-Agent": "AgenticEmailDefense-UrlAnalyzer/1.0"},
-                    allow_redirects=True
-                )
+                current_url = final_destination
+                redirect_count = 0
+                max_redirects = 5
+                
+                while redirect_count < max_redirects:
+                    resp = session.get(
+                        current_url,
+                        timeout=3.0,
+                        headers={"User-Agent": "AgenticEmailDefense-UrlAnalyzer/1.0"},
+                        allow_redirects=False
+                    )
+                    
+                    if resp.is_redirect:
+                        redirect_count += 1
+                        next_url = urllib.parse.urljoin(current_url, resp.headers.get("Location", ""))
+                        hop_allowed, hop_reason, hop_ssrf = self.network_guard.evaluate_destination(next_url)
+                        if not hop_allowed:
+                            evidence.append(f"NetworkGuard blocked dynamic redirect hop '{next_url}': {hop_reason}")
+                            return UrlSandboxReport(
+                                scan_id=scan_id,
+                                submitted_url=url,
+                                final_destination_url=next_url,
+                                network_guard_blocked=True,
+                                blocked_reason=hop_reason,
+                                verdict="BLOCKED_SSRF" if hop_ssrf else "MALICIOUS",
+                                threat_category="SSRF_PROBE" if hop_ssrf else "NETWORK_VIOLATION",
+                                risk_score=95.0 if hop_ssrf else 80.0,
+                                evidence=evidence
+                            )
+                        current_url = next_url
+                        redirect_chain.append(current_url)
+                    else:
+                        break
+                        
+                final_destination = current_url
+                
                 if resp.status_code == 200:
-                    html = resp.text
+                    html = resp.text[:100000]  # size limit 100KB
                     evidence.append(f"Retrieved live landing page ({len(html)} bytes, HTTP 200).")
                 else:
                     evidence.append(f"HTTP GET returned status code {resp.status_code}.")

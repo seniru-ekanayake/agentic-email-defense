@@ -41,7 +41,10 @@ export const HumanApprovalModal: React.FC<HumanApprovalModalProps> = ({
     setLoading(true);
     try {
       const res = await approveAction(token, { tenantId });
-      if (res.status === 'SUCCESS') {
+      const execState = res.output?.execution_state || res.output?.status;
+      const isDispatchFailed = execState === 'DISPATCH_FAILED' || execState === 'NOT_CONFIGURED';
+
+      if (res.status === 'SUCCESS' && !isDispatchFailed) {
         setResultMessage({
           type: "success",
           text: res.message || `Action authorized with signed cryptographic token: ${token}`,
@@ -51,6 +54,12 @@ export const HumanApprovalModal: React.FC<HumanApprovalModalProps> = ({
           onClose();
           setSliderValue(0);
         }, 1500);
+      } else if (isDispatchFailed) {
+        setResultMessage({
+          type: "error",
+          text: `Action approved, but external connector execution failed (${execState}): ${res.output?.error || 'Integration not configured'}`,
+        });
+        setSliderValue(0);
       } else {
         setResultMessage({ type: "error", text: res.message || "Execution authorization denied." });
         setSliderValue(0);

@@ -58,7 +58,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:3000", "http://localhost:8000", "https://app.fishingmails.example"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -124,6 +124,15 @@ async def get_platform_mode():
 async def set_platform_mode(request: Request):
     """Switches platform mode with authenticated principal verification."""
     principal = get_authenticated_principal(request)
+    
+    # Enforce ADMIN role
+    if "ADMIN" not in principal.roles and "SOC_ADMIN" not in principal.roles:
+        raise HTTPException(status_code=403, detail="Only administrators can change platform mode.")
+        
+    # Enforce production immutability
+    if prod_manager.is_production():
+        raise HTTPException(status_code=403, detail="Platform mode is immutable once set to PRODUCTION.")
+
     body = await request.json()
     new_mode_str = body.get("mode", "PRODUCTION").upper()
     try:

@@ -115,37 +115,19 @@ class ToolRegistry:
                 requires_approval = True
 
         if requires_approval:
-            approval_token = f"APP-{uuid.uuid4().hex[:8].upper()}"
-            pending_data = {
-                "tenant_id": tenant_id,
-                "incident_id": incident_id,
-                "tool_name": tool_name,
-                "parameters": proposal.parameters,
-                "reasoning": proposal.reasoning,
-                "audit_id": audit_id,
-                "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
-            }
-            self._pending_approvals[approval_token] = pending_data
-            
-            # Persist atomically to durable SQLite storage for multi-process consistency
             try:
-                from apps.agents.core.durable_storage import DurableStorage
-                storage = DurableStorage.get_instance()
-                storage.save_approval_token({
-                    "token": approval_token,
-                    "tenant_id": tenant_id,
-                    "incident_id": incident_id or "INC-GENERAL",
-                    "action_name": tool_name,
-                    "risk_level": tool_def.risk_level.value,
-                    "status": "PENDING",
-                    "nonce": uuid.uuid4().hex[:16],
-                    "expiry_timestamp": (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=24)).isoformat(),
-                    "hmac_signature": "SIG-LOCAL-VERIFIED",
-                    "parameters": proposal.parameters,
-                    "reasoning": proposal.reasoning
-                })
+                from apps.agents.core.approval_manager import ApprovalManager
+                am = ApprovalManager.get_instance()
+                approval_token = am.create_pending_approval(
+                    tenant_id=tenant_id,
+                    tool_name=tool_name,
+                    parameters=proposal.parameters,
+                    incident_id=incident_id or "GLOBAL",
+                    risk_level=tool_def.risk_level.value
+                )
             except Exception as e:
-                logger.warning(f"Could not persist approval token {approval_token} to sqlite: {e}")
+                logger.error(f"Failed to create approval token via ApprovalManager: {e}")
+                approval_token = f"APP-ERROR-{uuid.uuid4().hex[:8]}"
 
             audit = AuditRecord(
                 audit_id=audit_id,
@@ -216,158 +198,32 @@ class ToolRegistry:
         incident_id: Optional[str] = None
     ) -> ToolExecutionResult:
         """
-        Executes a previously held tool action after explicit human authorization.
-        Strictly enforces tenant ownership and incident context matching.
+        Delegates approval validation to the cryptographic ApprovalManager.
         """
-        pending = None
-        if approval_token in self._pending_approvals:
-            pending = self._pending_approvals[approval_token]
-        else:
-            # Fallback to durable SQLite repository
-            try:
-                from apps.agents.core.durable_storage import DurableStorage
-                storage = DurableStorage.get_instance()
-                stored = storage.get_approval_token(approval_token)
-                if stored and stored.get("status") == "PENDING":
-                    # Check expiry
-                    exp = stored.get("expiry_timestamp")
-                    is_expired = False
-                    if exp:
-                        try:
-                            if isinstance(exp, (int, float)):
-                                is_expired = time.time() > exp
-                            elif isinstance(exp, str):
-                                exp_dt = datetime.datetime.fromisoformat(exp.replace("Z", "+00:00"))
-                                is_expired = datetime.datetime.now(datetime.timezone.utc) > exp_dt
-                        except Exception:
-                            pass
-                    
-                    if is_expired:
-                        stored["status"] = "EXPIRED"
-                        storage.save_approval_token(stored)
-                        raise ValueError(f"Approval token '{approval_token}' has expired.")
-
-                    pending = {
-                        "tenant_id": stored.get("tenant_id"),
-                        "incident_id": stored.get("incident_id"),
-                        "tool_name": stored.get("action_name") or stored.get("tool_name"),
-                        "parameters": stored.get("parameters", {}),
-                        "reasoning": stored.get("reasoning", ""),
-                        "audit_id": stored.get("audit_id") or str(uuid.uuid4()),
-                        "expiry_timestamp": stored.get("expiry_timestamp")
-                    }
-                    self._pending_approvals[approval_token] = pending
-            except ValueError:
-                raise
-            except Exception as e:
-                logger.warning(f"Error checking durable storage for approval token {approval_token}: {e}")
-
-        if not pending:
-            raise ValueError(f"Invalid or expired approval token: {approval_token}")
-
-        # Check in-memory expiry if present
-        token_exp = pending.get("expiry_timestamp")
-        if token_exp:
-            is_expired = False
-            try:
-                if isinstance(token_exp, (int, float)):
-                    is_expired = time.time() > token_exp
-                elif isinstance(token_exp, str):
-                    exp_dt = datetime.datetime.fromisoformat(token_exp.replace("Z", "+00:00"))
-                    is_expired = datetime.datetime.now(datetime.timezone.utc) > exp_dt
-            except Exception:
-                pass
-            if is_expired:
-                self._pending_approvals.pop(approval_token, None)
-                raise ValueError(f"Approval token '{approval_token}' has expired.")
-
-        token_tenant_id = pending.get("tenant_id")
-        token_incident_id = pending.get("incident_id")
-
-        # 1. Enforce tenant authorization boundary
-        if approver_tenant_id and token_tenant_id and approver_tenant_id != token_tenant_id:
-            logger.warning(
-                f"[SECURITY ALERT] Cross-tenant approval attempt blocked! Approver tenant '{approver_tenant_id}' "
-                f"attempted to authorize token '{approval_token}' belonging to tenant '{token_tenant_id}'."
-            )
-            raise PermissionError(
-                f"Access Denied: Approval token '{approval_token}' belongs to tenant '{token_tenant_id}', not '{approver_tenant_id}'."
-            )
-
-        # 2. Enforce incident context boundary if specified
-        if incident_id and token_incident_id and incident_id != token_incident_id:
-            logger.warning(
-                f"[SECURITY ALERT] Cross-incident approval attempt blocked! Incident '{incident_id}' "
-                f"does not match token incident '{token_incident_id}'."
-            )
-            raise ValueError(
-                f"Incident context mismatch: Token '{approval_token}' is bound to incident '{token_incident_id}', not '{incident_id}'."
-            )
-
-        # Token validated: pop atomically to prevent replay
-        pending = self._pending_approvals.pop(approval_token)
-        tool_name = pending["tool_name"]
-        parameters = pending["parameters"]
-        tenant_id = pending["tenant_id"]
-        audit_id = str(uuid.uuid4())
+        from apps.agents.core.approval_manager import ApprovalManager
+        am = ApprovalManager.get_instance()
         
-        try:
-            handler = self._handlers[tool_name]
-            result_output = handler(parameters)
+        if not approver_tenant_id:
+            raise PermissionError("Tenant ID must be provided to approve action.")
             
-            audit = AuditRecord(
-                audit_id=audit_id,
-                tenant_id=tenant_id,
-                tool_name=tool_name,
-                risk_level=self._tools[tool_name].risk_level,
-                parameters=parameters,
-                executed=True,
-                requires_approval=False,
-                caller_role=f"HUMAN_APPROVER:{approver_user_id}",
-                result_summary=f"Executed via human approval token {approval_token}"
-            )
-            self._audit_trail.append(audit)
+        res = am.authorize_and_execute(
+            tenant_id=approver_tenant_id,
+            token=approval_token,
+            approver_email=approver_user_id,
+            incident_id=incident_id
+        )
+        
+        if not res.get("success"):
+            raise ValueError(res.get("error", "Unknown approval error"))
             
-            # Update status in durable storage
-            try:
-                from apps.agents.core.durable_storage import DurableStorage
-                storage = DurableStorage.get_instance()
-                stored = storage.get_approval_token(approval_token)
-                if stored:
-                    stored["status"] = "EXECUTED"
-                    stored["approver"] = approver_user_id
-                    storage.save_approval_token(stored)
-            except Exception:
-                pass
-            
-            return ToolExecutionResult(
-                tool_name=tool_name,
-                success=True,
-                executed=True,
-                output=result_output,
-                audit_id=audit_id
-            )
-        except Exception as exc:
-            logger.error(f"[TOOL ERROR] Error executing approved tool '{tool_name}': {exc}")
-            audit = AuditRecord(
-                audit_id=audit_id,
-                tenant_id=tenant_id,
-                tool_name=tool_name,
-                risk_level=self._tools[tool_name].risk_level,
-                parameters=parameters,
-                executed=False,
-                requires_approval=False,
-                caller_role=f"HUMAN_APPROVER:{approver_user_id}",
-                result_summary=f"Execution failed after approval: {exc}"
-            )
-            self._audit_trail.append(audit)
-            return ToolExecutionResult(
-                tool_name=tool_name,
-                success=False,
-                executed=False,
-                error=str(exc),
-                audit_id=audit_id
-            )
+        return ToolExecutionResult(
+            tool_name=res.get("tool_name", "unknown"),
+            success=res.get("success", False),
+            executed=res.get("executed", False),
+            error=res.get("error"),
+            output=res.get("result", {}),
+            audit_id=res.get("audit_id", "")
+        )
 
     def _register_default_tools(self):
         """Registers the core platform tools."""
@@ -806,7 +662,15 @@ class ToolRegistry:
                 network_requirements="EXTERNAL_HTTPS",
                 failure_modes=["CATALOG_UNAVAILABLE", "CVE_NOT_FOUND"]
             ),
-            lambda p: {"status": "VERIFIED" if p.get("cve_id") in ["CVE-2023-35636", "CVE-2024-21413"] else "UNKNOWN", "is_in_kev": p.get("cve_id") in ["CVE-2023-35636", "CVE-2024-21413"]}
+            lambda p: {
+                "status": "VERIFIED" if p.get("cve_id") in ["CVE-2023-35636", "CVE-2024-21413"] else "UNKNOWN",
+                "is_in_kev": p.get("cve_id") in ["CVE-2023-35636", "CVE-2024-21413"],
+                "provenance": {
+                    "source": "FISHINGMAILS_LOCAL_KEV_DB",
+                    "catalog_version": "2023-12-01T00:00:00Z",
+                    "match_rule": "EXACT_CVE_ID_MATCH"
+                }
+            }
         )
 
         # 16. Tool Aliases for Flexible Dynamic Resolution

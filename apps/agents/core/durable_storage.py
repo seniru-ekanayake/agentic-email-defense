@@ -323,6 +323,16 @@ class DurableStorage:
                 return None
         return None
 
+    def claim_approval_token_atomic(self, token_str: str) -> bool:
+        """Atomically updates token status to CLAIMED if it is currently PENDING. Prevents TOCTOU races."""
+        conn = self._get_connection()
+        with conn:
+            cur = conn.execute(
+                "UPDATE approval_tokens SET status = 'CLAIMED' WHERE token = ? AND status = 'PENDING'",
+                (token_str,)
+            )
+            return cur.rowcount > 0
+
     def list_pending_approval_tokens(self, tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
         conn = self._get_connection()
         if tenant_id:

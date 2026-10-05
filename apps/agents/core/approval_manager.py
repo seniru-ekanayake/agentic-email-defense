@@ -14,7 +14,8 @@ import secrets
 import time
 import datetime
 import logging
-from typing import Any, Dict, List, Optional
+import os
+from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field
 
 from packages.schemas.python.models import ToolProposal, ToolExecutionResult
@@ -24,26 +25,39 @@ from apps.agents.core.durable_storage import DurableStorage
 logger = logging.getLogger("core.approval_manager")
 
 # Secret key for HMAC token signing (in production, loaded from environment or HSM)
-HMAC_SECRET_KEY = os.getenv("FISHINGMAILS_APPROVAL_HMAC_SECRET", "fishingmails-prod-approval-secret-key-v1").encode("utf-8") if "os" in globals() else b"fishingmails-prod-approval-secret-key-v1"
+HMAC_SECRET_KEY = os.getenv("FISHINGMAILS_APPROVAL_HMAC_SECRET")
+if not HMAC_SECRET_KEY:
+    # Explicit startup failure in production
+    from apps.agents.core.production_manager import ProductionManager
+    if ProductionManager.get_instance().is_production():
+        raise RuntimeError("FATAL SECURITY CONFIGURATION ERROR: FISHINGMAILS_APPROVAL_HMAC_SECRET is required in production.")
+    HMAC_SECRET_KEY = b"fishingmails-dev-approval-secret-key-v1"
+else:
+    HMAC_SECRET_KEY = HMAC_SECRET_KEY.encode("utf-8")
 
 
 class PendingApproval(BaseModel):
     token: str
     tenant_id: str
     incident_id: str = "GLOBAL"
-    tool_name: str
-    parameters: Dict[str, Any]
+    tool_name: str = Field(default="")
+    action_name: Optional[str] = None
+    parameters: Dict[str, Any] = Field(default_factory=dict)
     risk_level: str = "HIGH"
     target_cve: Optional[str] = None
     target_identity: Optional[str] = None
-    nonce: str
-    expiry_timestamp: float
-    hmac_signature: str
+    nonce: str = ""
+    expiry_timestamp: Union[float, str] = 0.0
+    hmac_signature: str = ""
     created_at: str = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
-    status: str = "PENDING"  # PENDING, APPROVED, REJECTED, EXPIRED, CONSUMED
+    status: str = "PENDING"  # PENDING, CLAIMED, EXECUTED, FAILED, REJECTED, EXPIRED, CONSUMED
     approver: Optional[str] = None
     comments: Optional[str] = None
     execution_result: Optional[Dict[str, Any]] = None
+
+    def model_post_init(self, __context: Any) -> None:
+        if not self.tool_name and self.action_name:
+            self.tool_name = self.action_name
 
 
 class ApprovalManager:
@@ -56,7 +70,7 @@ class ApprovalManager:
     def __init__(self, tool_registry: Optional[ToolRegistry] = None, storage: Optional[DurableStorage] = None):
         self.tool_registry = tool_registry or ToolRegistry()
         self.storage = storage or DurableStorage.get_instance()
-        self.secret_key = b"fishingmails-prod-approval-secret-key-v1"
+        self.secret_key = HMAC_SECRET_KEY
 
     @classmethod
     def get_instance(cls) -> ApprovalManager:
@@ -137,20 +151,35 @@ class ApprovalManager:
         if action_name and item.tool_name != action_name:
             return {"success": False, "error": f"Action mismatch for approval token (expected {item.tool_name}, got {action_name})", "executed": False}
 
-        # 2. Status & Single-Use Check
+        # 2. Expiry Check
+        try:
+            exp_time = float(item.expiry_timestamp)
+        except (ValueError, TypeError):
+            exp_time = 0.0
+            
+        if time.time() > exp_time:
+            if item.status == "PENDING":
+                item.status = "EXPIRED"
+                self.storage.save_approval_token(item.model_dump())
+            return {"success": False, "error": f"Token '{token}' has expired", "executed": False}
+
+        # 3. Cryptographic HMAC Signature Verification
+        expected_sig = self._compute_hmac(item.tenant_id, item.incident_id, item.tool_name, item.nonce, exp_time)
+        if not hmac.compare_digest(item.hmac_signature, expected_sig):
+            return {"success": False, "error": f"Cryptographic signature verification failed for token '{token}' (tampered token)", "executed": False}
+
+        # 4. Status & Atomic Single-Use Check
         if item.status != "PENDING":
             return {"success": False, "error": f"Token '{token}' is invalid or has already been processed / consumed (status: {item.status})", "executed": False}
 
-        # 3. Expiry Check
-        if time.time() > item.expiry_timestamp:
-            item.status = "EXPIRED"
-            self.storage.save_approval_token(item.model_dump())
-            return {"success": False, "error": f"Token '{token}' has expired", "executed": False}
+        if not self.storage.claim_approval_token_atomic(token):
+            return {"success": False, "error": f"Token '{token}' was already claimed by a concurrent request.", "executed": False}
 
-        # 4. Cryptographic HMAC Signature Verification
-        expected_sig = self._compute_hmac(item.tenant_id, item.incident_id, item.tool_name, item.nonce, item.expiry_timestamp)
-        if not hmac.compare_digest(item.hmac_signature, expected_sig):
-            return {"success": False, "error": f"Cryptographic signature verification failed for token '{token}' (tampered token)", "executed": False}
+        # Status is now CLAIMED in DB, update local item
+        item.status = "CLAIMED"
+        item.approver = approver_email
+        item.comments = comments
+        self.storage.save_approval_token(item.model_dump())
 
         # Build proposal and execute through ToolRegistry with autonomy=4 (Human Approved)
         proposal = ToolProposal(
@@ -168,8 +197,6 @@ class ApprovalManager:
 
         # Single-use status update: mark CONSUMED
         item.status = "CONSUMED" if exec_res.executed else "FAILED"
-        item.approver = approver_email
-        item.comments = comments
         item.execution_result = exec_res.model_dump()
         self.storage.save_approval_token(item.model_dump())
 
