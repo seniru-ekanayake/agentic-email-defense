@@ -96,7 +96,7 @@ The following 15 endpoints programmatically registered in `apps.server` access i
 
 ## 5. Live Production Security Test Matrix (31/31 PASSED)
 
-The live regression suite (`test_security_regression_suite.py`) executed black-box HTTP requests against the real running server (`http://127.0.0.1:8000`). All 31 scenarios passed with 100% compliance:
+The live regression suite (`scripts/audit/test_security_regression_suite.py`) executed black-box HTTP requests against the real running server (`http://127.0.0.1:8000`). All 31 scenarios passed with 100% compliance:
 
 | ID | Test Scenario | Request Under Test | Expected | Observed | Verdict |
 | :--- | :--- | :--- | :--- | :--- | :--- |

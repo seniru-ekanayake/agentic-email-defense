@@ -340,17 +340,17 @@ To elevate `ENTERPRISE OPERATIONAL CONDITIONAL` to `ENTERPRISE OPERATIONAL READY
 
 ## 12. Evidence Artifact Manifest
 
-All 7 machine-readable JSON artifacts reside in the workspace root:
+All 7 machine-readable JSON artifacts reside in `docs/artifacts/`:
 
 | Artifact Path | SHA-256 Checksum | Description |
 | :--- | :--- | :--- |
-| [`counterfactual_case_a.json`](file:///c:/Enterprise%20Agentic%20Email%20Exploitation%20Detection%20&%20Response%20Platform/counterfactual_case_a.json) | `c2174d812328227656d2cf74744d039868c2243d4f8f4a34bcf1b3762ae1ae8a` | Case A trace: malicious TI input -> cycle 2 `STOP` decision |
-| [`counterfactual_case_b.json`](file:///c:/Enterprise%20Agentic%20Email%20Exploitation%20Detection%20&%20Response%20Platform/counterfactual_case_b.json) | `bf56db36da4cfb570916a048037042079f53ee831fc9df8df3a1b3be0a4fc0d7` | Case B trace: unknown TI input -> cycle 2 `UrlSandboxRunner` pivot |
-| [`llm_arbitration_trace.json`](file:///c:/Enterprise%20Agentic%20Email%20Exploitation%20Detection%20&%20Response%20Platform/llm_arbitration_trace.json) | `d2c8c440fdb9bcfab3e3b5e43daaf5160877a57a34ec8efd92ec06f7467eecf3` | Disagreement arbitration: Rule (`ThreatIntelFeeds`) overridden by LLM (`CisaKevCorrelator`) |
-| [`failure_replanning_trace.json`](file:///c:/Enterprise%20Agentic%20Email%20Exploitation%20Detection%20&%20Response%20Platform/failure_replanning_trace.json) | `a804709d3b0c538aa39f28a7e02e86d06d4e8c1488c9eb47c87c71fca21ebba1` | Dynamic replanning: tool failure in Cycle $N$ -> alternate tool in Cycle $N+1$ |
-| [`negative_evidence_trace.json`](file:///c:/Enterprise%20Agentic%20Email%20Exploitation%20Detection%20&%20Response%20Platform/negative_evidence_trace.json) | `db8444a9539266bfd31e50f393867cbe5b211d13735f1fa68cce8ba80436d400` | Epistemic uncertainty: clean reputation does not trigger premature benign closure |
-| [`tool_capability_matrix.json`](file:///c:/Enterprise%20Agentic%20Email%20Exploitation%20Detection%20&%20Response%20Platform/tool_capability_matrix.json) | `5b15be682ef94f923b7ff4ef06b997c41349f48bfdb0132b84299b8214300e84` | 18 tools classified by exact execution mechanism |
-| [`enterprise_readiness_matrix.json`](file:///c:/Enterprise%20Agentic%20Email%20Exploitation%20Detection%20&%20Response%20Platform/enterprise_readiness_matrix.json) | `9ec189569fa1fa6e344e24ef289370cb3e6f987258385da4e74ea110d7e6fc3f` | 6 containment tools evaluated against live enterprise infrastructure |
+| [`docs/artifacts/counterfactual_case_a.json`](file:///c:/Enterprise%20Agentic%20Email%20Exploitation%20Detection%20&%20Response%20Platform/docs/artifacts/counterfactual_case_a.json) | `c2174d812328227656d2cf74744d039868c2243d4f8f4a34bcf1b3762ae1ae8a` | Case A trace: malicious TI input -> cycle 2 `STOP` decision |
+| [`docs/artifacts/counterfactual_case_b.json`](file:///c:/Enterprise%20Agentic%20Email%20Exploitation%20Detection%20&%20Response%20Platform/docs/artifacts/counterfactual_case_b.json) | `bf56db36da4cfb570916a048037042079f53ee831fc9df8df3a1b3be0a4fc0d7` | Case B trace: unknown TI input -> cycle 2 `UrlSandboxRunner` pivot |
+| [`docs/artifacts/llm_arbitration_trace.json`](file:///c:/Enterprise%20Agentic%20Email%20Exploitation%20Detection%20&%20Response%20Platform/docs/artifacts/llm_arbitration_trace.json) | `d2c8c440fdb9bcfab3e3b5e43daaf5160877a57a34ec8efd92ec06f7467eecf3` | Disagreement arbitration: Rule (`ThreatIntelFeeds`) overridden by LLM (`CisaKevCorrelator`) |
+| [`docs/artifacts/failure_replanning_trace.json`](file:///c:/Enterprise%20Agentic%20Email%20Exploitation%20Detection%20&%20Response%20Platform/docs/artifacts/failure_replanning_trace.json) | `a804709d3b0c538aa39f28a7e02e86d06d4e8c1488c9eb47c87c71fca21ebba1` | Dynamic replanning: tool failure in Cycle $N$ -> alternate tool in Cycle $N+1$ |
+| [`docs/artifacts/negative_evidence_trace.json`](file:///c:/Enterprise%20Agentic%20Email%20Exploitation%20Detection%20&%20Response%20Platform/docs/artifacts/negative_evidence_trace.json) | `db8444a9539266bfd31e50f393867cbe5b211d13735f1fa68cce8ba80436d400` | Epistemic uncertainty: clean reputation does not trigger premature benign closure |
+| [`docs/artifacts/tool_capability_matrix.json`](file:///c:/Enterprise%20Agentic%20Email%20Exploitation%20Detection%20&%20Response%20Platform/docs/artifacts/tool_capability_matrix.json) | `5b15be682ef94f923b7ff4ef06b997c41349f48bfdb0132b84299b8214300e84` | 18 tools classified by exact execution mechanism |
+| [`docs/artifacts/enterprise_readiness_matrix.json`](file:///c:/Enterprise%20Agentic%20Email%20Exploitation%20Detection%20&%20Response%20Platform/docs/artifacts/enterprise_readiness_matrix.json) | `9ec189569fa1fa6e344e24ef289370cb3e6f987258385da4e74ea110d7e6fc3f` | 6 containment tools evaluated against live enterprise infrastructure |
 
 ---
 
@@ -379,7 +379,7 @@ $$\mathbf{ENTERPRISE\ OPERATIONAL\ CONDITIONAL}$$
 ---
 
 ## 14. Sign-Off & Provenance
-- **Audit Tool**: `generate_evidence_grade_audit.py`
+- **Audit Tool**: `scripts/audit/generate_evidence_grade_audit.py`
 - **Audit Timestamp**: `2026-10-04T20:04:20Z`
 - **Repository Commit**: [`a886a083cc1f1fdab5530e26336f33029cedf95a`](file:///c:/Enterprise%20Agentic%20Email%20Exploitation%20Detection%20&%20Response%20Platform)
 - **Status**: Complete, fully audited, and permanently evidenced.

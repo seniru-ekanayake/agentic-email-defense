@@ -39,6 +39,9 @@ import requests
 import jwt
 from fastapi import Request
 
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, REPO_ROOT)
+
 from apps.agents.core.security_principal import (
     create_principal_token,
     get_jwt_secret_key,

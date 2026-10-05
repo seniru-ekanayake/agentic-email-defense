@@ -14,7 +14,7 @@ import requests
 import jwt
 from typing import Dict, Any, List
 
-REPO_ROOT = os.path.abspath(os.path.dirname(__file__))
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, REPO_ROOT)
 
 scratch_p = r"C:\Users\Seniru Ekanayake\.gemini\antigravity\brain\6ffae4fa-3797-4e4f-9e7f-d64ad0151c5b\scratch\test_requests.py"

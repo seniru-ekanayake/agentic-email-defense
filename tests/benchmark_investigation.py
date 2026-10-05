@@ -95,7 +95,9 @@ def run_benchmarks(iterations: int = 20):
     print("\n--- BENCHMARK RESULTS ---")
     print(json.dumps(benchmark_results, indent=2))
 
-    with open("benchmark_results.json", "w") as f:
+    out_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "docs", "artifacts"))
+    os.makedirs(out_dir, exist_ok=True)
+    with open(os.path.join(out_dir, "benchmark_results.json"), "w") as f:
         json.dump(benchmark_results, f, indent=2)
 
     return benchmark_results

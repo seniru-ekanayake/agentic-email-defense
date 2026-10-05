@@ -21,8 +21,10 @@ import datetime
 import requests
 from typing import Dict, Any, List
 
-REPO_ROOT = os.path.abspath(os.path.dirname(__file__))
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, REPO_ROOT)
+ARTIFACTS_DIR = os.path.join(REPO_ROOT, "docs", "artifacts")
+os.makedirs(ARTIFACTS_DIR, exist_ok=True)
 
 scratch_p = r"C:\Users\Seniru Ekanayake\.gemini\antigravity\brain\6ffae4fa-3797-4e4f-9e7f-d64ad0151c5b\scratch\test_requests.py"
 if not os.environ.get("OPENROUTER_API_KEY") and os.path.exists(scratch_p):
@@ -235,10 +237,10 @@ def run_counterfactual_proof():
         "full_trace": trace_b
     }
 
-    with open(os.path.join(REPO_ROOT, "counterfactual_case_a.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(ARTIFACTS_DIR, "counterfactual_case_a.json"), "w", encoding="utf-8") as f:
         json.dump(artifact_a, f, indent=2)
 
-    with open(os.path.join(REPO_ROOT, "counterfactual_case_b.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(ARTIFACTS_DIR, "counterfactual_case_b.json"), "w", encoding="utf-8") as f:
         json.dump(artifact_b, f, indent=2)
 
     print(f"  [+] Wrote counterfactual_case_a.json (Initial Hash: {hash_a_c1[:12]}, Cycle 2 Action: {dec_a_c2.action})")
@@ -343,7 +345,7 @@ def run_llm_first_arbitration_proof():
         }
     }
 
-    with open(os.path.join(REPO_ROOT, "llm_arbitration_trace.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(ARTIFACTS_DIR, "llm_arbitration_trace.json"), "w", encoding="utf-8") as f:
         json.dump(arb_trace, f, indent=2)
 
     print(f"  [+] Wrote llm_arbitration_trace.json (Rule: {rule_dec.tool_name} vs LLM: {llm_dec.tool_name} -> Arbitrated: {arbitrated.tool_name})")
@@ -423,7 +425,7 @@ def run_failure_replanning_proof():
         }
     }
 
-    with open(os.path.join(REPO_ROOT, "failure_replanning_trace.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(ARTIFACTS_DIR, "failure_replanning_trace.json"), "w", encoding="utf-8") as f:
         json.dump(fail_trace, f, indent=2)
 
     print(f"  [+] Wrote failure_replanning_trace.json (Cycle N: {fail_exec.tool_name} FAILED -> Cycle N+1: {dec_c_n1.tool_name})")
@@ -485,7 +487,7 @@ def run_negative_evidence_proof():
         }
     }
 
-    with open(os.path.join(REPO_ROOT, "negative_evidence_trace.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(ARTIFACTS_DIR, "negative_evidence_trace.json"), "w", encoding="utf-8") as f:
         json.dump(neg_trace, f, indent=2)
 
     print(f"  [+] Wrote negative_evidence_trace.json (Negative TI -> Secondary Behavioral Detonation: {dec_neg.tool_name})")
@@ -556,7 +558,7 @@ def run_capability_and_readiness_matrix():
         },
         "tools": capability_rows
     }
-    with open(os.path.join(REPO_ROOT, "tool_capability_matrix.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(ARTIFACTS_DIR, "tool_capability_matrix.json"), "w", encoding="utf-8") as f:
         json.dump(cap_matrix, f, indent=2)
     print(f"  [+] Wrote tool_capability_matrix.json ({len(capability_rows)} tools audited)")
 
@@ -596,7 +598,7 @@ def run_capability_and_readiness_matrix():
         },
         "containment_readiness": readiness_rows
     }
-    with open(os.path.join(REPO_ROOT, "enterprise_readiness_matrix.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(ARTIFACTS_DIR, "enterprise_readiness_matrix.json"), "w", encoding="utf-8") as f:
         json.dump(ent_matrix, f, indent=2)
     print(f"  [+] Wrote enterprise_readiness_matrix.json ({len(readiness_rows)} containment tools audited)")
 

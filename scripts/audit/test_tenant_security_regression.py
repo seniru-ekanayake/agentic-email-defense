@@ -9,6 +9,9 @@ import urllib.error
 import json
 import sys
 
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, REPO_ROOT)
+
 # Ensure production secret is set for token signing
 SECRET_KEY = os.environ.get(
     "FISHINGMAILS_AUTH_SECRET",

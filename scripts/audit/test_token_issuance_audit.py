@@ -22,6 +22,9 @@ import time
 import requests
 import jwt
 
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, REPO_ROOT)
+
 SECRET_KEY = os.environ.get(
     "FISHINGMAILS_AUTH_SECRET",
     "fishingmails-prod-enterprise-agentic-jwt-signing-key-32bytes-min"
