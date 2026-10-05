@@ -20,6 +20,7 @@ export default function RootLayout({
           href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
           rel="stylesheet"
         />
+        <link rel="stylesheet" href="/tailwind.css" />
       </head>
       <body className="antialiased bg-[#f7f8fa] text-[#111318] font-sans selection:bg-blue-500/20 selection:text-blue-600">
         {children}

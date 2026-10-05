@@ -101,6 +101,7 @@ Thumbs.db
 *.png
 !apps/web/public/logo.png
 !assets/logo.png
+!assets/dashboard.png
 audit_results_*.json
 authoritative_dom_*.json
 live_llm_dom_*.json
