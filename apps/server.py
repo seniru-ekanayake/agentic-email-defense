@@ -86,8 +86,7 @@ def record_audit_event(actor: str, action: str, details: Optional[Dict[str, Any]
     audit_log_store.append(entry)
     investigation_service.durable_storage.record_audit_log(actor=actor, action=action, details=entry)
 
-# Active incident store: In PRODUCTION mode, starts clean with ZERO fake incidents!
-incidents_db: List[Dict[str, Any]] = []
+
 
 # Mount static assets if directory exists
 if os.path.exists("assets"):
@@ -206,10 +205,7 @@ async def get_incidents(request: Request):
     limit_param = request.query_params.get("limit")
     limit = int(limit_param) if limit_param and limit_param.isdigit() else 100
     durable_incidents = investigation_service.list_incidents(tenant_id=tenant_id, limit=limit)
-    if durable_incidents:
-        return JSONResponse(content=[i.model_dump() for i in durable_incidents])
-    tenant_filtered = [i for i in incidents_db if i.get("tenant_id") == tenant_id][:limit]
-    return JSONResponse(content=tenant_filtered)
+    return JSONResponse(content=[i.model_dump() for i in durable_incidents])
 
 
 @app.get("/api/v1/incidents/{incident_id}")
@@ -224,11 +220,6 @@ async def get_incident_detail(incident_id: str, request: Request):
             return JSONResponse(content=inc.model_dump())
     except PermissionError as pe:
         raise HTTPException(status_code=403, detail=str(pe))
-    for inc_mem in incidents_db:
-        if inc_mem.get("incident_id") == incident_id:
-            if inc_mem.get("tenant_id") != tenant_id:
-                raise HTTPException(status_code=403, detail=f"Access denied: Incident belongs to tenant '{inc_mem.get('tenant_id')}', not '{tenant_id}'.")
-            return JSONResponse(content=inc_mem)
     raise HTTPException(status_code=404, detail="Incident not found")
 
 
@@ -263,7 +254,6 @@ async def investigate_email(
     )
 
     incident_dict = incident.model_dump()
-    incidents_db.insert(0, incident_dict)
 
     record_audit_event(
         actor=principal.subject_id,
@@ -287,7 +277,7 @@ async def stream_investigation_events(incident_id: str, request: Request):
 
     try:
         inc = investigation_service.get_incident(incident_id, tenant_id=tenant_id)
-        if not inc and not any(i.get("incident_id") == incident_id and i.get("tenant_id") == tenant_id for i in incidents_db):
+        if not inc:
             raise HTTPException(status_code=403, detail=f"Access denied: Incident '{incident_id}' not found or belongs to another tenant.")
     except PermissionError as pe:
         raise HTTPException(status_code=403, detail=str(pe))
@@ -401,11 +391,6 @@ async def compare_investigations(id_a: str, id_b: str, request: Request):
         inc_b = investigation_service.get_incident(id_b, tenant_id=tenant_id)
     except PermissionError as pe:
         raise HTTPException(status_code=403, detail=str(pe))
-
-    if not inc_a:
-        inc_a = next((i for i in incidents_db if i["incident_id"] == id_a and i.get("tenant_id") == tenant_id), None)
-    if not inc_b:
-        inc_b = next((i for i in incidents_db if i["incident_id"] == id_b and i.get("tenant_id") == tenant_id), None)
 
     if not inc_a or not inc_b:
         raise HTTPException(status_code=404, detail="One or both investigations could not be found.")
@@ -557,12 +542,12 @@ async def get_agent_trust_score(request: Request):
     """Requirement 29: Agent Trust Score metric with tenant authorization."""
     principal = get_authenticated_principal(request)
     tenant_id = resolve_authorized_tenant(request, principal)
-    tenant_incidents = [i for i in incidents_db if i.get("tenant_id") == tenant_id]
+    tenant_incidents = investigation_service.list_incidents(tenant_id=tenant_id, limit=5)
     if tenant_incidents:
         latest = tenant_incidents[0]
-        ts = latest.get("trust_score")
+        ts = getattr(latest, "trust_score", None)
         if ts:
-            return JSONResponse(content=ts)
+            return JSONResponse(content=ts if isinstance(ts, dict) else ts.model_dump())
     calc = TrustScoreCalculator.calculate(12, [{"claim": "Baseline"}], [{"tool": "MimeParser"}], [{"decision": "Parse"}], 3)
     return JSONResponse(content=calc.model_dump())
 
@@ -715,7 +700,6 @@ async def run_demo_sample():
     )
     incident_dict = incident.model_dump()
     incident_dict["title"] = "[DEMO FIXTURE] " + incident_dict["title"]
-    incidents_db.insert(0, incident_dict)
     return JSONResponse(content=incident_dict)
 
 

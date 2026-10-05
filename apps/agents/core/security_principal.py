@@ -199,6 +199,8 @@ def get_authenticated_principal(request: Request) -> AuthenticatedPrincipal:
     5. Roles parsed strictly from verified claims.
     """
     auth_header = request.headers.get("Authorization")
+    if not auth_header and request.query_params.get("token"):
+        auth_header = f"Bearer {request.query_params.get('token')}"
 
     if not auth_header:
         if is_local_auth_fallback_enabled():

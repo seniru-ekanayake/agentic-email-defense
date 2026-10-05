@@ -17,6 +17,7 @@ import {
   getPlatformMode,
 } from '@/lib/api/incidents';
 import { subscribeInvestigationEvents } from '@/lib/api/events';
+import { getAuthToken, setAuthToken } from '@/lib/api/client';
 import { AgentLiveStreamVisualizer } from '@/components/AgentLiveStreamVisualizer';
 import { AttackGraphVisualizer } from '@/components/AttackGraphVisualizer';
 import { IncidentDetailModal } from '@/components/IncidentDetailModal';
@@ -52,6 +53,19 @@ export default function DashboardPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sseUnsubscribeRef = useRef<(() => void) | null>(null);
 
+  const [tokenInput, setTokenInput] = useState<string>('');
+  const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
+
+  // Sync token from storage on mount
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const stored = getAuthToken();
+      if (stored) {
+        setTokenInput(stored);
+      }
+    }
+  }, []);
+
   // Fetch initial ledger and backend health
   const refreshLedger = useCallback(async () => {
     try {
@@ -67,7 +81,9 @@ export default function DashboardPage() {
       if (incidents.status === 'fulfilled') {
         setIncidentList(incidents.value || []);
       } else {
-        throw new Error(incidents.reason?.message || 'Failed to connect to backend server at http://localhost:8000');
+        const errMsg = incidents.reason?.message || 'Failed to connect to backend server at http://localhost:8000';
+        setIncidentList([]);
+        throw new Error(errMsg);
       }
 
       if (health.status === 'fulfilled') setSystemHealth(health.value);
@@ -405,6 +421,13 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="flex gap-2">
+            <button
+              onClick={() => setShowAuthModal(true)}
+              className="border border-[#e7e9ee] bg-white px-3.5 py-2.5 rounded-lg text-xs font-medium text-[#535963] shadow-[0_1px_1px_rgba(0,0,0,0.02)] hover:bg-[#f7f8fa] transition cursor-pointer flex items-center gap-1.5"
+              title="Configure Authentication Token & Tenant"
+            >
+              <span>🔑 Session Auth</span>
+            </button>
             <button
               onClick={refreshLedger}
               disabled={loading}
@@ -781,6 +804,94 @@ export default function DashboardPage() {
             refreshLedger();
           }}
         />
+      )}
+
+      {/* 5. Production Session Authentication Configuration Modal */}
+      {showAuthModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 border border-[#e7e9ee] space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-[#e7e9ee]">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">🔑</span>
+                <h3 className="font-bold text-[#111318] text-base">SOC Analyst Authentication</h3>
+              </div>
+              <button
+                onClick={() => setShowAuthModal(false)}
+                className="text-[#737986] hover:text-[#111318] text-lg font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-[#737986] leading-relaxed">
+              FishingMails enforces cryptographic JWT authentication bound to specific tenant boundaries. Provide a signed JSON Web Token or switch active tenant.
+            </p>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-[11px] font-bold text-[#535963] uppercase tracking-wider mb-1">
+                  Active Tenant Context
+                </label>
+                <input
+                  type="text"
+                  value={tenantId}
+                  onChange={(e) => setTenantId(e.target.value.trim())}
+                  placeholder="e.g. tenant-enterprise-prod"
+                  className="w-full text-xs font-mono p-2.5 bg-[#f8fafc] border border-[#e7e9ee] rounded-lg outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-[#535963] uppercase tracking-wider mb-1">
+                  Bearer JWT Token (Local Storage & SSE Query)
+                </label>
+                <textarea
+                  rows={4}
+                  value={tokenInput}
+                  onChange={(e) => setTokenInput(e.target.value.trim())}
+                  placeholder="Paste eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                  className="w-full text-xs font-mono p-2.5 bg-[#f8fafc] border border-[#e7e9ee] rounded-lg outline-none focus:border-blue-500 resize-none break-all"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-3 border-t border-[#e7e9ee]">
+              <button
+                onClick={() => {
+                  setTokenInput('');
+                  if (typeof window !== 'undefined') {
+                    localStorage.removeItem('fishingmails_auth_token');
+                    sessionStorage.removeItem('fishingmails_auth_token');
+                  }
+                }}
+                className="text-xs text-rose-600 font-medium hover:underline"
+              >
+                Clear Token
+              </button>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowAuthModal(false)}
+                  className="px-3.5 py-2 text-xs font-medium text-[#535963] hover:bg-[#f7f8fa] rounded-lg transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    if (tokenInput) {
+                      setAuthToken(tokenInput);
+                    }
+                    setShowAuthModal(false);
+                    refreshLedger();
+                  }}
+                  className="px-4 py-2 bg-[#111318] hover:bg-[#252830] text-white rounded-lg text-xs font-bold transition shadow-sm"
+                >
+                  Apply & Sync
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
