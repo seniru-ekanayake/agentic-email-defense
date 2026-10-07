@@ -29,6 +29,19 @@ export function getAuthToken(): string | null {
   return process.env.NEXT_PUBLIC_AUTH_TOKEN || null;
 }
 
+/** Reads the tenant claim from the stored JWT (display only; the server derives the tenant itself). */
+export function getTokenTenant(token?: string | null): string | null {
+  const t = token ?? getAuthToken();
+  if (!t) return null;
+  try {
+    const payload = t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const claims = JSON.parse(atob(payload.padEnd(payload.length + ((4 - (payload.length % 4)) % 4), '=')));
+    return typeof claims.tenant_id === 'string' ? claims.tenant_id : null;
+  } catch {
+    return null;
+  }
+}
+
 export function setAuthToken(token: string): void {
   if (typeof window !== 'undefined') {
     localStorage.setItem('fishingmails_auth_token', token);
@@ -47,7 +60,7 @@ export async function apiClient<T>(
   endpoint: string,
   options: RequestOptions = {}
 ): Promise<T> {
-  const { tenantId = 'tenant-enterprise-prod', timeoutMs = 25000, headers = {}, ...fetchOpts } = options;
+  const { tenantId, timeoutMs = 25000, headers = {}, ...fetchOpts } = options;
 
   const url = endpoint.startsWith('http') ? endpoint : `${DEFAULT_BASE_URL}${endpoint}`;
 
@@ -84,8 +97,10 @@ export async function apiClient<T>(
       } catch {
         errorBody = await response.text();
       }
+      const detail = typeof errorBody === 'object' ? errorBody?.detail : undefined;
       const message =
-        (typeof errorBody === 'object' && errorBody?.detail) ||
+        (typeof detail === 'string' && detail) ||
+        (typeof detail === 'object' && detail?.message) ||
         (typeof errorBody === 'object' && errorBody?.message) ||
         `HTTP ${response.status}: ${response.statusText}`;
       throw new ApiError(response.status, message, errorBody);

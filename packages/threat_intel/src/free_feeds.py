@@ -108,13 +108,25 @@ class URLhausConnector:
             }
             return result
 
+        auth_key = os.getenv("URLHAUS_AUTH_KEY", "").strip()
+        if not auth_key:
+            return {
+                "url": target_url,
+                "query_status": "not_configured",
+                "network_state": "NOT_CONFIGURED",
+                "is_malicious": False,
+                "threat_type": None,
+                "tags": [],
+                "detail": "URLHAUS_AUTH_KEY is not set; URLhaus requires an Auth-Key for API access.",
+            }
+
         session, net_mode = get_enterprise_session()
         try:
             response = session.post(
                 self.API_URL,
                 data={"url": target_url},
                 timeout=self.timeout,
-                headers={"User-Agent": "AgenticEmailDefense-FreeFeed/1.0"},
+                headers={"User-Agent": "AgenticEmailDefense-FreeFeed/1.0", "Auth-Key": auth_key},
             )
             if response.status_code == 200:
                 data = response.json()
@@ -173,12 +185,21 @@ class URLhausConnector:
 class DoHReputationConnector:
     """DNS-over-HTTPS (DoH) threat resolution using Quad9 or Cloudflare Security DoH."""
 
-    QUAD9_DOH = "https://dns.quad9.net/dns-query"
+    QUAD9_DOH = "https://dns.quad9.net:5053/dns-query"  # Quad9 serves DNS-JSON on port 5053
     CLOUDFLARE_DOH = "https://security.cloudflare-dns.com/dns-query"
+    CLOUDFLARE_UNFILTERED_DOH = "https://cloudflare-dns.com/dns-query"
 
     def __init__(self, cache: Optional[ThreatIntelCache] = None, timeout: float = 3.0):
         self.cache = cache or ThreatIntelCache()
         self.timeout = timeout
+
+    def _resolves_unfiltered(self, domain: str, session) -> bool:
+        try:
+            r = session.get(self.CLOUDFLARE_UNFILTERED_DOH, params={"name": domain, "type": "A"},
+                            headers={"accept": "application/dns-json"}, timeout=self.timeout)
+            return r.status_code == 200 and r.json().get("Status") == 0
+        except Exception:
+            return False
 
     def check_domain_reputation(self, domain: str) -> Dict[str, Any]:
         """Query Quad9 threat-blocking DoH."""
@@ -202,7 +223,11 @@ class DoHReputationConnector:
                 data = res.json()
                 status = data.get("Status", 0)
                 answers = data.get("Answer", [])
-                is_blocked = status == 3 or any(a.get("data") in ("0.0.0.0", "127.0.0.1") for a in answers)
+                # Quad9 signals a threat block with NXDOMAIN. A domain that simply does not exist also
+                # returns NXDOMAIN, so a block is only confirmed when an unfiltered resolver resolves it.
+                is_blocked = False
+                if status == 3:
+                    is_blocked = self._resolves_unfiltered(clean_domain, session)
                 result = {
                     "domain": clean_domain,
                     "doh_provider": "quad9",
@@ -393,10 +418,14 @@ class FreeThreatIntelEngine:
             url_res = self.urlhaus.query_url(indicator_value)
             parsed = urlparse(indicator_value)
             doh_res = self.doh.check_domain_reputation(parsed.hostname or "") if parsed.hostname else {}
+            urlhaus_ok = url_res.get("query_status") in ("ok", "no_results")
+            doh_ok = doh_res.get("dns_status_code") in (0, 3) and doh_res.get("network_state") not in ("NETWORK_ERROR", "TLS_ERROR")
             return {
                 "indicator": indicator_value,
                 "type": "url",
                 "is_malicious": url_res.get("is_malicious", False) or doh_res.get("is_blocked_by_threat_filter", False),
+                "feeds_succeeded": bool(urlhaus_ok or doh_ok),
+                "feeds": {"urlhaus": url_res.get("query_status"), "quad9": doh_res.get("network_state") if doh_res else "SKIPPED"},
                 "urlhaus": url_res,
                 "doh": doh_res,
             }

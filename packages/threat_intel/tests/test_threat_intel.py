@@ -30,14 +30,14 @@ class TestThreatIntel(unittest.TestCase):
 
     def test_cisa_kev_ingestion(self):
         records = self.kev_ingestor.ingest(live=False)
-        self.assertGreater(len(records), 0)
-        
         cve_map = {r.cve_id: r for r in records}
-        self.assertIn("CVE-2023-35636", cve_map)
-        rec = cve_map["CVE-2023-35636"]
-        self.assertEqual(rec.product, "Outlook")
-        self.assertIsNotNone(rec.provenance.raw_hash)
-        self.assertEqual(rec.provenance.confidence, 1.0)
+        # The bundled snapshot is a subset of the real CISA catalog.
+        self.assertIn("CVE-2023-23397", cve_map)
+        self.assertIn("CVE-2024-21413", cve_map)
+        self.assertEqual(cve_map["CVE-2024-21413"].date_added, "2025-02-06")
+        # CVE-2023-35636 is a real Outlook CVE but is NOT in CISA KEV.
+        self.assertNotIn("CVE-2023-35636", cve_map)
+        self.assertIsNotNone(cve_map["CVE-2023-23397"].provenance.raw_hash)
 
     def test_nvd_ingestion_and_cvss(self):
         cve = self.nvd_ingestor.fetch_cve("CVE-2023-35636", live=False)
@@ -54,19 +54,17 @@ class TestThreatIntel(unittest.TestCase):
         self.assertIn("T1187", tech_ids)  # Forced Authentication
 
     def test_exploitability_assessment_view_interaction(self):
-        """Verify CVE-2023-35636 is scored as Interaction: VIEW with high confidence."""
+        """CVE-2023-35636 needs only rendering (VIEW) but has no KEV entry, so no known-exploitation impact is claimed."""
         cve = self.nvd_ingestor.fetch_cve("CVE-2023-35636", live=False)
-        kev_records = {r.cve_id: r for r in self.kev_ingestor.ingest(live=False)}
-        kev = kev_records.get("CVE-2023-35636")
+        kev = {r.cve_id: r for r in self.kev_ingestor.ingest(live=False)}.get("CVE-2023-35636")
+        self.assertIsNone(kev)
 
         assessment = self.analyzer.assess_cve(cve, kev)
         self.assertEqual(assessment.cve, "CVE-2023-35636")
-        self.assertEqual(assessment.affected_product, "Microsoft Outlook")
         self.assertTrue(assessment.email_delivery_possible)
         self.assertTrue(assessment.rendering_required)
         self.assertEqual(assessment.interaction_required, InteractionRequirement.VIEW)
-        self.assertIn("NTLM", assessment.session_impact)
-        self.assertGreaterEqual(assessment.confidence, 0.90)
+        self.assertNotIn("NTLM", assessment.session_impact)
 
     def test_exploitability_assessment_zero_click(self):
         """Verify CVE-2023-23397 is scored as Interaction: NONE (zero-click arrival)."""

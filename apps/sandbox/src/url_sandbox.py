@@ -27,11 +27,22 @@ class UrlSandboxRunner:
     ]
 
     BRAND_KEYWORD_MAP = {
-        "microsoft": ["microsoft", "office365", "o365", "outlook", "sharepoint", "onedrive", "login.live.com"],
-        "google": ["google", "gmail", "workspace", "google docs", "google drive"],
-        "okta": ["okta", "single sign-on", "sso"],
-        "paypal": ["paypal", "payment confirmation", "wallet dispute"],
-        "bank": ["chase", "wells fargo", "bank of america", "citi", "secure banking"]
+        "Microsoft": ["microsoft", "office 365", "office365", "outlook", "sharepoint", "onedrive"],
+        "Google": ["google", "gmail"],
+        "Okta": ["okta"],
+        "PayPal": ["paypal"],
+        "Apple": ["apple id", "icloud"],
+        "DocuSign": ["docusign"],
+    }
+
+    # Registrable domains legitimately operated by each brand
+    BRAND_DOMAINS = {
+        "Microsoft": ["microsoft.com", "microsoftonline.com", "live.com", "office.com", "outlook.com", "sharepoint.com", "onedrive.com", "office365.com"],
+        "Google": ["google.com", "gmail.com", "googleusercontent.com"],
+        "Okta": ["okta.com", "oktapreview.com"],
+        "PayPal": ["paypal.com"],
+        "Apple": ["apple.com", "icloud.com"],
+        "DocuSign": ["docusign.com", "docusign.net"],
     }
 
     def __init__(self):
@@ -54,7 +65,20 @@ class UrlSandboxRunner:
         risk_score = 0.0
 
         # 1. Network Boundary & SSRF Evaluation
-        is_allowed, block_reason, is_ssrf = self.network_guard.evaluate_destination(url)
+        is_allowed, block_reason, is_ssrf = self.network_guard.evaluate_destination(url, resolve=simulated_landing_html is None and simulated_redirects is None)
+        if not is_allowed and not is_ssrf and "does not resolve" in (block_reason or ""):
+            evidence.append(f"Destination unreachable: {block_reason}")
+            return UrlSandboxReport(
+                scan_id=scan_id,
+                submitted_url=url,
+                final_destination_url=url,
+                network_guard_blocked=False,
+                blocked_reason=block_reason,
+                verdict="UNREACHABLE",
+                threat_category="UNREACHABLE",
+                risk_score=0.0,
+                evidence=evidence
+            )
         if not is_allowed:
             evidence.append(f"NetworkGuard blocked target: {block_reason}")
             return UrlSandboxReport(
@@ -96,7 +120,7 @@ class UrlSandboxRunner:
         # 3. Trace Redirects
         redirect_chain = simulated_redirects or [url]
         for hop in redirect_chain:
-            hop_allowed, hop_reason, hop_ssrf = self.network_guard.evaluate_destination(hop)
+            hop_allowed, hop_reason, hop_ssrf = self.network_guard.evaluate_destination(hop, resolve=simulated_landing_html is None and simulated_redirects is None)
             if not hop_allowed:
                 evidence.append(f"NetworkGuard blocked redirect hop '{hop}': {hop_reason}")
                 return UrlSandboxReport(
@@ -125,9 +149,9 @@ class UrlSandboxRunner:
         
         # If no simulated landing HTML is provided, attempt live fetch if destination is safe
         if html is None:
-            import requests
+            from apps.sandbox.src.safe_http import guarded_session
             try:
-                session = requests.Session()
+                session = guarded_session()
                 current_url = final_destination
                 redirect_count = 0
                 max_redirects = 5
@@ -143,7 +167,7 @@ class UrlSandboxRunner:
                     if resp.is_redirect:
                         redirect_count += 1
                         next_url = urllib.parse.urljoin(current_url, resp.headers.get("Location", ""))
-                        hop_allowed, hop_reason, hop_ssrf = self.network_guard.evaluate_destination(next_url)
+                        hop_allowed, hop_reason, hop_ssrf = self.network_guard.evaluate_destination(next_url, resolve=True)
                         if not hop_allowed:
                             evidence.append(f"NetworkGuard blocked dynamic redirect hop '{next_url}': {hop_reason}")
                             return UrlSandboxReport(
@@ -171,12 +195,25 @@ class UrlSandboxRunner:
                     evidence.append(f"HTTP GET returned status code {resp.status_code}.")
                     html = ""
             except Exception as net_err:
+                if "Blocked connection to non-public address" in str(net_err):
+                    evidence.append(f"Connection refused by SSRF guard: {net_err}")
+                    return UrlSandboxReport(
+                        scan_id=scan_id,
+                        submitted_url=url,
+                        final_destination_url=current_url,
+                        network_guard_blocked=True,
+                        blocked_reason="Destination resolved to a non-public address at connect time",
+                        verdict="BLOCKED_SSRF",
+                        threat_category="SSRF_PROBE",
+                        risk_score=95.0,
+                        evidence=evidence
+                    )
                 evidence.append(f"Static HTTP fetch failed: {net_err}")
                 html = ""
 
         html = html or ""
         html_lower = html.lower()
-        evidence.append("Playwright browser execution UNAVAILABLE on host; analyzed via static HTTP inspection.")
+        evidence.append("Analyzed via static HTTP fetch (no browser execution).")
         
         has_login = False
         has_password = False
@@ -186,34 +223,39 @@ class UrlSandboxRunner:
         obfuscated_js = False
 
         if html:
-            # Login Form Detection
-            if "<form" in html_lower and ("login" in html_lower or "signin" in html_lower or "auth" in html_lower or "password" in html_lower):
-                has_login = True
-                risk_score += 25.0
-                evidence.append("Interactive login / credential submission form identified on page.")
+            title_match = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
+            title_text = (title_match.group(1) if title_match else "").lower()
+            forms = re.findall(r"<form\b.*?</form>", html, re.IGNORECASE | re.DOTALL)
+            form_text = " ".join(forms).lower()
 
-            if 'type="password"' in html_lower or "type='password'" in html_lower:
-                has_password = True
-                risk_score += 30.0
+            has_password = 'type="password"' in form_text or "type='password'" in form_text or "type=password" in form_text
+            has_login = bool(forms) and (has_password or any(k in form_text for k in ("login", "sign in", "signin")))
+            if has_login:
+                risk_score += 15.0
+                evidence.append("Credential submission form present on page.")
+            if has_password:
+                risk_score += 15.0
                 evidence.append("Password input field detected.")
 
-            # Brand Impersonation Scanning
-            for brand, keywords in self.BRAND_KEYWORD_MAP.items():
-                if any(kw in html_lower for kw in keywords):
-                    # Check if domain actually belongs to legitimate brand
-                    if brand not in domain:
-                        impersonated_brand = brand.capitalize()
-                        risk_score += 35.0
-                        evidence.append(f"Brand impersonation detected: Page mimics {impersonated_brand} login, but hosted on '{domain}'.")
+            # Brand impersonation: a credential form branded as a company the host does not belong to.
+            if has_login:
+                final_host = (urllib.parse.urlparse(final_destination).hostname or domain).lower()
+                for brand, keywords in self.BRAND_KEYWORD_MAP.items():
+                    if any(kw in title_text or kw in form_text for kw in keywords):
+                        legit = self.BRAND_DOMAINS.get(brand, [])
+                        if not any(final_host == d or final_host.endswith("." + d) for d in legit):
+                            impersonated_brand = brand
+                            risk_score += 45.0
+                            evidence.append(f"Credential form branded as {brand} on non-{brand} host '{final_host}'.")
                         break
 
-            # Obfuscated JavaScript
-            if "unescape(" in html_lower or "eval(" in html_lower or "atob(" in html_lower:
+            # Heavily obfuscated inline JavaScript (common minified JS alone is not a signal)
+            inline_scripts = " ".join(re.findall(r"<script\b(?![^>]*\bsrc=)[^>]*>(.*?)</script>", html, re.IGNORECASE | re.DOTALL)).lower()
+            if re.search(r"(eval|document\.write)\s*\(\s*(unescape|atob|decodeuricomponent)\s*\(", inline_scripts):
                 obfuscated_js = True
-                risk_score += 30.0
-                evidence.append("Obfuscated or dynamically evaluated JavaScript detected on landing page.")
+                risk_score += 35.0
+                evidence.append("Inline script decodes and evaluates an obfuscated payload.")
 
-            # Script and iFrame sources
             for script_match in re.findall(r'<script[^>]+src=["\']([^"\']+)["\']', html, re.IGNORECASE):
                 external_scripts.append(script_match)
             for iframe_match in re.findall(r'<iframe[^>]+src=["\']([^"\']+)["\']', html, re.IGNORECASE):
@@ -232,7 +274,7 @@ class UrlSandboxRunner:
         # 5. Determine Verdict and Threat Category
         risk_score = round(min(risk_score, 100.0), 1)
 
-        if risk_score >= 70.0 or obfuscated_js:
+        if risk_score >= 70.0:
             verdict = "MALICIOUS"
             if impersonated_brand or (has_login and has_password):
                 threat_category = "CREDENTIAL_PHISHING"

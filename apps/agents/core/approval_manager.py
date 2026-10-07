@@ -24,25 +24,37 @@ from apps.agents.core.durable_storage import DurableStorage
 
 logger = logging.getLogger("core.approval_manager")
 
+INSECURE_HMAC_SECRETS = {
+    "generate-a-unique-32-byte-hmac-secret-for-approval-tokens",
+    "fishingmails-dev-approval-secret-key-v1",
+    "test-hmac-secret-key-that-is-long-enough-32bytes",
+}
+
+# Minimum role required to authorize an action of a given risk level.
+APPROVAL_ROLE_REQUIREMENTS = {
+    "LOW": {"SOC_ANALYST", "INCIDENT_RESPONDER", "SOC_ADMIN", "ADMIN"},
+    "MEDIUM": {"SOC_ANALYST", "INCIDENT_RESPONDER", "SOC_ADMIN", "ADMIN"},
+    "HIGH": {"INCIDENT_RESPONDER", "SOC_ADMIN", "ADMIN"},
+    "CRITICAL": {"SOC_ADMIN", "ADMIN"},
+}
+
+
 def get_hmac_secret_key() -> bytes:
     """
-    Retrieves and validates the HMAC approval signing secret.
-    In PRODUCTION mode:
-    - Must be explicitly set via FISHINGMAILS_APPROVAL_HMAC_SECRET.
-    - If missing, fails closed with RuntimeError.
-    In DEVELOPMENT / TEST / DEMO mode:
-    - Defaults to safe development HMAC secret if unset.
+    Approval-token HMAC secret. Uses the same environment resolution as authentication.
+    Production/staging: FISHINGMAILS_APPROVAL_HMAC_SECRET must be set, >= 32 chars, not a placeholder.
+    Development/test: falls back to a fixed development key when unset.
     """
+    from apps.agents.core.security_principal import is_production_mode, get_environment
     secret = os.getenv("FISHINGMAILS_APPROVAL_HMAC_SECRET", "").strip()
-    from apps.agents.core.production_manager import ProductionManager
-    if ProductionManager.get_instance().is_production():
-        if not secret:
-            raise RuntimeError("FATAL SECURITY CONFIGURATION ERROR: FISHINGMAILS_APPROVAL_HMAC_SECRET is required in production.")
+    if is_production_mode():
+        if not secret or len(secret) < 32 or secret in INSECURE_HMAC_SECRETS:
+            raise RuntimeError(
+                "FATAL SECURITY CONFIGURATION ERROR: FISHINGMAILS_APPROVAL_HMAC_SECRET must be set to a unique "
+                f"secret of at least 32 characters in '{get_environment()}' mode."
+            )
         return secret.encode("utf-8")
-    if not secret:
-        return b"fishingmails-dev-approval-secret-key-v1"
-    return secret.encode("utf-8")
-
+    return (secret or "fishingmails-dev-approval-secret-key-v1").encode("utf-8")
 
 
 class PendingApproval(BaseModel):
@@ -77,7 +89,7 @@ class ApprovalManager:
     _instance: Optional[ApprovalManager] = None
 
     def __init__(self, tool_registry: Optional[ToolRegistry] = None, storage: Optional[DurableStorage] = None):
-        self.tool_registry = tool_registry or ToolRegistry()
+        self.tool_registry = tool_registry or ToolRegistry.get_instance()
         self.storage = storage or DurableStorage.get_instance()
 
     @property
@@ -100,7 +112,7 @@ class ApprovalManager:
         tool_name: str,
         parameters: Dict[str, Any],
         incident_id: str = "GLOBAL",
-        risk_level: str = "HIGH",
+        risk_level: Optional[str] = None,
         target_cve: Optional[str] = None,
         target_identity: Optional[str] = None,
         ttl_seconds: float = 86400.0  # 24 hour expiry
@@ -108,6 +120,10 @@ class ApprovalManager:
         """
         Generates and persists a cryptographically signed authorization token.
         """
+        if not risk_level:
+            # Risk always comes from the registered tool definition; unknown tools are treated as CRITICAL.
+            registered = self.tool_registry.get_risk_level(tool_name) if self.tool_registry else "UNKNOWN"
+            risk_level = registered if registered != "UNKNOWN" else "CRITICAL"
         nonce = secrets.token_hex(16)
         expiry = time.time() + ttl_seconds
         sig = self._compute_hmac(tenant_id, incident_id, tool_name, nonce, expiry)
@@ -142,10 +158,11 @@ class ApprovalManager:
         approver_email: str,
         comments: Optional[str] = None,
         incident_id: Optional[str] = None,
-        action_name: Optional[str] = None
+        action_name: Optional[str] = None,
+        approver_roles: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
-        Validates HMAC signature, scoping, expiry, and single-use status before executing approved tool.
+        Validates HMAC signature, scoping, role authority, expiry, and single-use status before executing.
         """
         token_data = self.storage.get_approval_token(token)
         if not token_data:
@@ -156,6 +173,12 @@ class ApprovalManager:
         # 1. Scoping Checks
         if item.tenant_id != tenant_id:
             return {"success": False, "error": f"Tenant mismatch for approval token (expected {item.tenant_id}, got {tenant_id})", "executed": False}
+
+        if approver_roles is not None:
+            allowed = APPROVAL_ROLE_REQUIREMENTS.get(str(item.risk_level).upper(), {"SOC_ADMIN", "ADMIN"})
+            if not allowed.intersection(approver_roles):
+                return {"success": False, "executed": False, "forbidden": True,
+                        "error": f"Insufficient role to authorize {item.risk_level} action '{item.tool_name}' (requires one of {sorted(allowed)})"}
 
         if incident_id and item.incident_id != "GLOBAL" and item.incident_id != incident_id:
             return {"success": False, "error": f"Incident mismatch for approval token (expected {item.incident_id}, got {incident_id})", "executed": False}
@@ -208,7 +231,7 @@ class ApprovalManager:
         )
 
         # Single-use status update: mark CONSUMED
-        item.status = "CONSUMED" if exec_res.executed else "FAILED"
+        item.status = "CONSUMED" if (exec_res.executed and exec_res.success) else "FAILED"
         item.execution_result = exec_res.model_dump()
         self.storage.save_approval_token(item.model_dump())
 
@@ -216,6 +239,7 @@ class ApprovalManager:
         return {
             "success": exec_res.success,
             "executed": exec_res.executed,
+            "error": exec_res.error,
             "token": token,
             "tool_name": item.tool_name,
             "result": exec_res.output,
@@ -237,6 +261,8 @@ class ApprovalManager:
         item = PendingApproval(**token_data)
         if item.tenant_id != tenant_id:
             return {"success": False, "error": "Tenant mismatch for approval token"}
+        if item.status != "PENDING":
+            return {"success": False, "error": f"Token '{token}' is not pending (status: {item.status})"}
 
         item.status = "REJECTED"
         item.approver = approver_email

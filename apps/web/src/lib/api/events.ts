@@ -59,17 +59,17 @@ export function subscribeInvestigationEvents(
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      // Kept across reads: an SSE event may arrive split over several network chunks.
+      let currentEvent = 'message';
+      let currentData = '';
 
       while (!isClosed) {
         const { done, value } = await reader.read();
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\\n');
+        const lines = buffer.split(/\r?\n/);
         buffer = lines.pop() || '';
-
-        let currentEvent = 'message';
-        let currentData = '';
 
         for (const line of lines) {
           if (line.startsWith('event:')) {

@@ -69,6 +69,10 @@ class ToolRegistry:
         self._handlers[definition.name] = handler
         logger.info(f"Registered tool: {definition.name} [Risk: {definition.risk_level.value}, Approval: {definition.approval_requirement.value}]")
 
+    def get_risk_level(self, tool_name: str) -> str:
+        tool = self._tools.get(tool_name)
+        return tool.risk_level.value if tool else "UNKNOWN"
+
     def get_tool_definitions(self) -> List[ToolDefinition]:
         return list(self._tools.values())
 
@@ -127,7 +131,15 @@ class ToolRegistry:
                 )
             except Exception as e:
                 logger.error(f"Failed to create approval token via ApprovalManager: {e}")
-                approval_token = f"APP-ERROR-{uuid.uuid4().hex[:8]}"
+                return ToolExecutionResult(
+                    tool_name=tool_name,
+                    success=False,
+                    executed=False,
+                    requires_human_approval=True,
+                    approval_token=None,
+                    error=f"Approval subsystem unavailable; action not queued: {e}",
+                    audit_id=audit_id
+                )
 
             audit = AuditRecord(
                 audit_id=audit_id,
@@ -158,6 +170,7 @@ class ToolRegistry:
         try:
             handler = self._handlers[tool_name]
             result_output = handler(proposal.parameters)
+            dispatch_failed = isinstance(result_output, dict) and result_output.get("confirmed") is False
             
             audit = AuditRecord(
                 audit_id=audit_id,
@@ -168,16 +181,17 @@ class ToolRegistry:
                 executed=True,
                 requires_approval=False,
                 caller_role=caller_role,
-                result_summary="Execution successful"
+                result_summary="Dispatch not confirmed" if dispatch_failed else "Execution successful"
             )
             self._audit_trail.append(audit)
             logger.info(f"[TOOL EXECUTED] Tool '{tool_name}' executed successfully.")
             
             return ToolExecutionResult(
                 tool_name=tool_name,
-                success=True,
+                success=not dispatch_failed,
                 executed=True,
                 output=result_output,
+                error=(result_output.get("detail") or result_output.get("status")) if dispatch_failed else None,
                 audit_id=audit_id
             )
         except Exception as e:
@@ -218,7 +232,7 @@ class ToolRegistry:
             incident_id=incident_id
         )
         
-        if not res.get("success"):
+        if not res.get("executed"):
             err_msg = res.get("error", "Unknown approval error")
             if "Tenant mismatch" in err_msg:
                 raise PermissionError(err_msg)
@@ -450,16 +464,16 @@ class ToolRegistry:
 
         # 4. Search Historical Mailbox Activity (LOW risk)
         def _handle_search_mailbox(p: Dict[str, Any]) -> Dict[str, Any]:
-            mail_api = os.getenv("MAIL_API_URL") or os.getenv("IMAP_SERVER")
-            if not mail_api:
-                return {
-                    "status": "NOT_CONFIGURED",
-                    "execution_state": "LOCAL_EMPTY",
-                    "matched_messages": [],
-                    "query": p.get("query"),
-                    "detail": "Historical mailbox search connector NOT_CONFIGURED in environment."
-                }
-            return {"status": "CONFIRMED", "matched_messages": [], "query": p.get("query")}
+            dispatch_res = _dispatch_external_webhook(
+                url=os.getenv("MAILBOX_SEARCH_URL"),
+                action_name="search_mailbox_history",
+                payload=p,
+                auth_token=os.getenv("MAILBOX_SEARCH_TOKEN")
+            )
+            remote = dispatch_res.get("remote_response") or {}
+            dispatch_res["matched_messages"] = remote.get("matched_messages", []) if isinstance(remote, dict) else []
+            dispatch_res["query"] = p.get("query")
+            return dispatch_res
 
         self.register_tool(
             ToolDefinition(
@@ -566,12 +580,12 @@ class ToolRegistry:
                 input_schema={"title": "string", "severity": "string", "details": "object"},
                 output_schema={"ticket_id": "string", "status": "string"}
             ),
-            lambda p: {
-                "ticket_id": f"SOC-{uuid.uuid4().hex[:6].upper()}",
-                "status": "OPEN",
-                "title": p.get("title"),
-                "storage": "LOCAL_LEDGER"
-            }
+            lambda p: _dispatch_external_webhook(
+                url=os.getenv("SOC_TICKET_WEBHOOK_URL"),
+                action_name="create_soc_ticket",
+                payload=p,
+                auth_token=os.getenv("SOC_TICKET_WEBHOOK_TOKEN")
+            )
         )
 
         # 9. Free Threat Intel Indicator Lookup (LOW risk)
@@ -684,7 +698,8 @@ class ToolRegistry:
                 network_requirements="NONE",
                 failure_modes=["ENCODING_ERROR"]
             ),
-            lambda p: {"has_anomalies": len(_unicode_analyzer.analyze_text(p.get("text", ""), p.get("location", "BODY"))) > 0}
+            lambda p: (lambda f: {"has_anomalies": len(f) > 0, "anomalies": [f"{x.anomaly_type}: {x.description}" for x in f][:20]})(
+                _unicode_analyzer.analyze_text(p.get("text", ""), p.get("location", "BODY")))
         )
 
         # 15. CISA KEV & NVD Vulnerability Correlator (LOW risk)

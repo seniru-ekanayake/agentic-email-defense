@@ -173,9 +173,22 @@ class DurableStorage:
                     timestamp TEXT NOT NULL,
                     actor TEXT NOT NULL,
                     action TEXT NOT NULL,
-                    details_json TEXT NOT NULL
+                    details_json TEXT NOT NULL,
+                    tenant_id TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS platform_settings (
+                    tenant_id TEXT NOT NULL,
+                    key TEXT NOT NULL,
+                    value_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (tenant_id, key)
                 );
                 """)
+                cols = {r[1] for r in conn.execute("PRAGMA table_info(audit_logs)").fetchall()}
+                if "tenant_id" not in cols:
+                    conn.execute("ALTER TABLE audit_logs ADD COLUMN tenant_id TEXT")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_tenant ON audit_logs(tenant_id)")
             logger.info(f"DurableStorage initialized successfully at {self.db_path}")
         except Exception as e:
             logger.error(f"Failed to initialize SQLite database at {self.db_path}: {e}")
@@ -514,7 +527,7 @@ class DurableStorage:
                 event.get("event_type", "agent.info"),
                 event.get("message", ""),
                 event.get("status", "INFO"),
-                json.dumps(event.get("data", {}), default=str),
+                json.dumps({"__event__": event}, default=str),  # full event, so it can be replayed exactly
                 event.get("timestamp", "")
             ))
 
@@ -522,17 +535,23 @@ class DurableStorage:
         conn = self._get_connection()
         cur = conn.execute("SELECT * FROM agent_events WHERE incident_id = ? ORDER BY timestamp ASC", (incident_id,))
         results = []
-        for row in cur.fetchall():
-            results.append({
+        for idx, row in enumerate(cur.fetchall()):
+            stored = json.loads(row["data_json"] or "{}")
+            if isinstance(stored, dict) and "__event__" in stored:
+                results.append(stored["__event__"])
+                continue
+            results.append({  # rows written before full-event storage
                 "event_id": row["event_id"],
                 "investigation_id": row["incident_id"],
                 "agent_run_id": row["agent_run_id"],
                 "event_type": row["event_type"],
                 "message": row["message"],
                 "status": row["status"],
-                "data": json.loads(row["data_json"] or "{}"),
+                "sequence_number": idx + 1,
+                "data": stored,
                 "timestamp": row["timestamp"]
             })
+        results.sort(key=lambda e: (e.get("sequence_number") or 0))
         return results
 
     # --- Attack Graph ---
@@ -577,36 +596,57 @@ class DurableStorage:
     # --- Audit Logs ---
 
     def save_audit_log(self, entry: Dict[str, Any]):
+        details = entry.get("details", {}) or {}
         conn = self._get_connection()
         with conn:
             conn.execute("""
-                INSERT INTO audit_logs (timestamp, actor, action, details_json)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO audit_logs (timestamp, actor, action, details_json, tenant_id)
+                VALUES (?, ?, ?, ?, ?)
             """, (
                 entry.get("timestamp", ""),
-                entry.get("actor", "SOC_ANALYST"),
+                entry.get("actor", "SYSTEM"),
                 entry.get("action", "SYSTEM_ACTION"),
-                json.dumps(entry.get("details", {}), default=str)
+                json.dumps(details, default=str),
+                entry.get("tenant_id") or details.get("tenant_id"),
             ))
 
-    def record_audit_log(self, actor: str, action: str, details: Optional[Dict[str, Any]] = None):
+    def record_audit_log(self, actor: str, action: str, details: Optional[Dict[str, Any]] = None, tenant_id: Optional[str] = None):
         self.save_audit_log({
             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "actor": actor,
             "action": action,
-            "details": details or {}
+            "details": details or {},
+            "tenant_id": tenant_id,
         })
 
-    def get_audit_logs(self, limit: int = 100) -> List[Dict[str, Any]]:
+    def get_audit_logs(self, tenant_id: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
         conn = self._get_connection()
-        cur = conn.execute("SELECT * FROM audit_logs ORDER BY log_id DESC LIMIT ?", (limit,))
+        if tenant_id is None:
+            cur = conn.execute("SELECT * FROM audit_logs ORDER BY log_id DESC LIMIT ?", (limit,))
+        else:
+            cur = conn.execute("SELECT * FROM audit_logs WHERE tenant_id = ? ORDER BY log_id DESC LIMIT ?", (tenant_id, limit))
         return [{
             "id": r["log_id"],
             "timestamp": r["timestamp"],
             "actor": r["actor"],
             "action": r["action"],
+            "tenant_id": r["tenant_id"],
             "details": json.loads(r["details_json"] or "{}")
         } for r in cur.fetchall()]
+
+    # --- Tenant-scoped platform settings ---
+    def get_setting(self, tenant_id: str, key: str) -> Optional[Any]:
+        row = self._get_connection().execute(
+            "SELECT value_json FROM platform_settings WHERE tenant_id = ? AND key = ?", (tenant_id, key)).fetchone()
+        return json.loads(row["value_json"]) if row else None
+
+    def set_setting(self, tenant_id: str, key: str, value: Any) -> None:
+        conn = self._get_connection()
+        with conn:
+            conn.execute("""
+                INSERT INTO platform_settings (tenant_id, key, value_json, updated_at) VALUES (?, ?, ?, ?)
+                ON CONFLICT(tenant_id, key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
+            """, (tenant_id, key, json.dumps(value, default=str), datetime.datetime.now(datetime.timezone.utc).isoformat()))
 
     # --- Investigation States (Durable Checkpoints for Planner Restart) ---
 

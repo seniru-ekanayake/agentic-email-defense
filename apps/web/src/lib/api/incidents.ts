@@ -10,8 +10,7 @@ export interface ListIncidentsOptions {
 }
 
 export async function listIncidents(options: ListIncidentsOptions = {}): Promise<ComprehensiveIncidentRecord[]> {
-  const queryParam = options.tenantId ? `?tenant_id=${encodeURIComponent(options.tenantId)}` : '';
-  return apiClient<ComprehensiveIncidentRecord[]>(`/api/v1/incidents${queryParam}`, {
+  return apiClient<ComprehensiveIncidentRecord[]>('/api/v1/incidents', {
     tenantId: options.tenantId,
     method: 'GET',
   });
@@ -21,8 +20,7 @@ export async function getIncident(
   incidentId: string,
   options: { tenantId?: string } = {}
 ): Promise<ComprehensiveIncidentRecord> {
-  const queryParam = options.tenantId ? `?tenant_id=${encodeURIComponent(options.tenantId)}` : '';
-  return apiClient<ComprehensiveIncidentRecord>(`/api/v1/incidents/${encodeURIComponent(incidentId)}${queryParam}`, {
+  return apiClient<ComprehensiveIncidentRecord>(`/api/v1/incidents/${encodeURIComponent(incidentId)}`, {
     tenantId: options.tenantId,
     method: 'GET',
   });
@@ -31,11 +29,10 @@ export async function getIncident(
 export async function investigateEmail(
   file: File | Blob,
   filename?: string,
-  tenantId: string = 'tenant-enterprise-prod'
+  tenantId?: string
 ): Promise<ComprehensiveIncidentRecord> {
   const formData = new FormData();
   formData.append('file', file, filename || (file instanceof File ? file.name : 'message.eml'));
-  formData.append('tenant_id', tenantId);
 
   return apiClient<ComprehensiveIncidentRecord>('/api/v1/investigate', {
     method: 'POST',
@@ -43,27 +40,6 @@ export async function investigateEmail(
     body: formData,
     // Do not set Content-Type header so browser automatically sets multipart/form-data boundary
     headers: {},
-  });
-}
-
-export async function pauseInvestigation(incidentId: string, tenantId?: string): Promise<{ status: string; incident_id: string }> {
-  return apiClient<{ status: string; incident_id: string }>(`/api/v1/investigations/${encodeURIComponent(incidentId)}/pause`, {
-    method: 'POST',
-    tenantId,
-  });
-}
-
-export async function resumeInvestigation(incidentId: string, tenantId?: string): Promise<{ status: string; incident_id: string }> {
-  return apiClient<{ status: string; incident_id: string }>(`/api/v1/investigations/${encodeURIComponent(incidentId)}/resume`, {
-    method: 'POST',
-    tenantId,
-  });
-}
-
-export async function cancelInvestigation(incidentId: string, tenantId?: string): Promise<{ status: string; incident_id: string }> {
-  return apiClient<{ status: string; incident_id: string }>(`/api/v1/investigations/${encodeURIComponent(incidentId)}/cancel`, {
-    method: 'POST',
-    tenantId,
   });
 }
 

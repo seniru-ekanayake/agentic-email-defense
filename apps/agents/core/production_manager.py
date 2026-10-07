@@ -9,6 +9,7 @@ In PRODUCTION mode:
 All data must strictly originate from actual ingested emails and live tools.
 """
 
+import os
 from enum import Enum
 from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field
@@ -31,7 +32,9 @@ class ProductionManager:
     @classmethod
     def get_instance(cls) -> "ProductionManager":
         if cls._instance is None:
-            cls._instance = ProductionManager(PlatformMode.PRODUCTION)
+            env = (os.environ.get("FISHINGMAILS_ENV") or os.environ.get("ENVIRONMENT") or "production").strip().lower()
+            mode = {"development": PlatformMode.DEVELOPMENT, "test": PlatformMode.TEST}.get(env, PlatformMode.PRODUCTION)
+            cls._instance = ProductionManager(mode)
         return cls._instance
 
     @property

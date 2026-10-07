@@ -4,6 +4,7 @@ Fetches and normalizes CISA KEV catalog with offline resilience.
 """
 
 import json
+import os
 import logging
 import urllib.request
 import urllib.error
@@ -16,57 +17,22 @@ logger = logging.getLogger("CisaKevIngestor")
 
 CISA_KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 
-# Authoritative offline snapshot for resilience during local development or network isolation
-BUNDLED_KEV_SNAPSHOT = [
-    {
-        "cveID": "CVE-2023-35636",
-        "vendorProject": "Microsoft",
-        "product": "Outlook",
-        "vulnerabilityName": "Microsoft Outlook Information Disclosure Vulnerability",
-        "dateAdded": "2024-01-16",
-        "shortDescription": "Microsoft Outlook contains an information disclosure vulnerability that allows NTLM hash theft via crafted email previews.",
-        "requiredAction": "Apply mitigations per vendor instructions.",
-        "dueDate": "2024-02-06",
-        "knownRansomwareCampaignUse": "Known",
-        "notes": "Exploited via rendering email content."
-    },
-    {
-        "cveID": "CVE-2023-23397",
-        "vendorProject": "Microsoft",
-        "product": "Outlook",
-        "vulnerabilityName": "Microsoft Outlook Elevation of Privilege Vulnerability",
-        "dateAdded": "2023-03-14",
-        "shortDescription": "Microsoft Outlook contains an elevation of privilege vulnerability triggered when a specially crafted email with PidLidReminderFileParameter is received and processed.",
-        "requiredAction": "Apply vendor updates.",
-        "dueDate": "2023-04-04",
-        "knownRansomwareCampaignUse": "Known",
-        "notes": "Zero-interaction exploit: triggered upon email arrival."
-    },
-    {
-        "cveID": "CVE-2024-21413",
-        "vendorProject": "Microsoft",
-        "product": "Outlook",
-        "vulnerabilityName": "Microsoft Outlook Remote Code Execution Vulnerability (MonikerLink)",
-        "dateAdded": "2024-02-13",
-        "shortDescription": "Microsoft Outlook contains a remote code execution vulnerability where clicking or previewing a link with file:// and # triggers security bypass.",
-        "requiredAction": "Apply vendor patches.",
-        "dueDate": "2024-03-05",
-        "knownRansomwareCampaignUse": "Known",
-        "notes": "Low-interaction exploit."
-    },
-    {
-        "cveID": "CVE-2022-27925",
-        "vendorProject": "Zimbra",
-        "product": "Collaboration Suite (ZCS)",
-        "vulnerabilityName": "Zimbra Collaboration Suite Remote Code Execution",
-        "dateAdded": "2022-08-11",
-        "shortDescription": "Zimbra Collaboration Suite contains an arbitrary file upload vulnerability leading to RCE in mboximport.",
-        "requiredAction": "Apply vendor patches.",
-        "dueDate": "2022-09-01",
-        "knownRansomwareCampaignUse": "Known",
-        "notes": "Exploited in webmail deployments."
-    }
-]
+# Offline snapshot: a subset of the real CISA KEV catalog, shared with the CisaKevCorrelator tool.
+# Regenerate with `python scripts/refresh_kev.py`.
+KEV_DATASET_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "..", "apps", "agents", "core", "data",
+                                "known_exploited_vulnerabilities.json")
+
+
+def _load_bundled_snapshot() -> list:
+    try:
+        with open(KEV_DATASET_PATH, "r", encoding="utf-8") as f:
+            return json.load(f).get("vulnerabilities", [])
+    except Exception as exc:
+        logger.error(f"KEV snapshot unavailable at {KEV_DATASET_PATH}: {exc}")
+        return []
+
+
+BUNDLED_KEV_SNAPSHOT = _load_bundled_snapshot()
 
 
 class CisaKevIngestor:
@@ -94,10 +60,10 @@ class CisaKevIngestor:
             except Exception as e:
                 logger.warning(f"Live CISA KEV fetch failed: {e}. Falling back to bundled offline catalog.")
                 raw_items = BUNDLED_KEV_SNAPSHOT
-                source_url = "bundled://cisa_kev_offline_snapshot_2024-02-13.json"
+                source_url = "bundled://known_exploited_vulnerabilities.json"
         else:
             raw_items = BUNDLED_KEV_SNAPSHOT
-            source_url = "bundled://cisa_kev_offline_snapshot_2024-02-13.json"
+            source_url = "bundled://known_exploited_vulnerabilities.json"
 
         records: List[KevRecord] = []
         for item in raw_items:

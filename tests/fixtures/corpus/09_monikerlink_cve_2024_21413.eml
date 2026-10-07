@@ -1,0 +1,10 @@
+From: "Shared Drive" <share@docs-sharing-portal.net>
+To: "Bob Jones" <bob@acme-widgets.com>
+Subject: Document shared with you
+Date: Mon, 05 Oct 2026 10:00:00 +0000
+Message-ID: <moniker-009@docs-sharing-portal.net>
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+Authentication-Results: mx.acme-widgets.com; spf=pass; dkim=pass; dmarc=pass
+
+<html><body><p>Open the shared document: <a href="file:///\203.0.113.10\share\report.rtf!something">report.rtf</a></p></body></html>

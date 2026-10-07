@@ -98,13 +98,13 @@ class EmailAttackSurfaceEngine:
                 tenant_id=tenant_id,
                 domain=domain,
                 host=host,
-                ip_address="198.51.100.25",
+                ip_address=None,
                 port=443,
                 service_type="HTTPS/OWA" if (product and "Exchange" in product) else "HTTPS/Webmail",
                 webmail_path="/owa" if (product and "Exchange" in product) else ("/zimbra" if (product and "Zimbra" in product) else None),
-                product=product or "Generic SMTP/MIME",
+                product=product or "Unknown (not fingerprinted)",
                 version=version,
-                is_internet_facing=True,
+                is_internet_facing=bool(product),
                 states=list(set(states)),
                 associated_cves=associated_cves
             )
@@ -145,21 +145,8 @@ class EmailAttackSurfaceEngine:
         return scores
 
     def _discover_dns(self, domain: str) -> DnsDiscoveryResult:
-        """Discovers DNS & MX records (resilient offline fallback for synthetic tests)."""
-        if "enterprise-corp" in domain or "example.com" in domain or "local" in domain:
-            return DnsDiscoveryResult(
-                domain=domain,
-                mx_records=[f"10 mail.{domain}"],
-                spf_record="v=spf1 mx -all",
-                dmarc_record="v=DMARC1; p=reject",
-                mail_hosts=[f"mail.{domain}", f"owa.{domain}"],
-                discovered_ips=["198.51.100.25"]
-            )
-        
-        # Default mock
-        return DnsDiscoveryResult(
-            domain=domain,
-            mx_records=[f"10 mx.{domain}"],
-            mail_hosts=[f"mail.{domain}"],
-            discovered_ips=["198.51.100.1"]
-        )
+        """
+        Records the recipient domain as the asset under consideration. No MX/IP data is invented:
+        live MX discovery is not performed on the investigation path, so these fields stay empty.
+        """
+        return DnsDiscoveryResult(domain=domain, mx_records=[], mail_hosts=[domain], discovered_ips=[])

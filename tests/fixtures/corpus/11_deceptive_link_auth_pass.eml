@@ -1,0 +1,10 @@
+From: "IT Helpdesk" <helpdesk@acme-widgets-support.com>
+To: "Bob Jones" <bob@acme-widgets.com>
+Subject: Password expires today
+Date: Mon, 05 Oct 2026 10:00:00 +0000
+Message-ID: <decept-011@acme-widgets-support.com>
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+Authentication-Results: mx.acme-widgets.com; spf=pass; dkim=pass; dmarc=pass
+
+<html><body><p>Keep your password: <a href="http://acme-pw-reset.example.net/keep">https://login.microsoftonline.com/acme</a></p></body></html>

@@ -155,6 +155,7 @@ class InvestigationState(BaseModel):
     llm_call_count: int = 0
     llm_tokens_total: int = 0
     replanning_cycle_count: int = 0
+    llm_calls: List[Dict[str, Any]] = Field(default_factory=list)  # every real LLM request: model, status, latency, tokens, error
     
     # Engine Observability
     planner_engine: str = "RULE_ENGINE"

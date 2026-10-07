@@ -265,7 +265,7 @@ export function IncidentDetailModal({
           {activeTab === 'trace' && (
             <div className="space-y-3">
               <h4 className="text-xs font-bold uppercase font-mono text-[#737986] tracking-wider">
-                Autonomous Decision Trace ({incident.decision_trace?.length || 0})
+                Planner Decision Trace ({incident.decision_trace?.length || 0})
               </h4>
               <div className="space-y-2">
                 {incident.decision_trace?.map((dec, idx) => (

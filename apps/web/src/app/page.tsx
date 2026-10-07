@@ -17,7 +17,7 @@ import {
   getPlatformMode,
 } from '@/lib/api/incidents';
 import { subscribeInvestigationEvents } from '@/lib/api/events';
-import { getAuthToken, setAuthToken } from '@/lib/api/client';
+import { getAuthToken, setAuthToken, getTokenTenant } from '@/lib/api/client';
 import { AgentLiveStreamVisualizer } from '@/components/AgentLiveStreamVisualizer';
 import { AttackGraphVisualizer } from '@/components/AttackGraphVisualizer';
 import { IncidentDetailModal } from '@/components/IncidentDetailModal';
@@ -39,7 +39,7 @@ export default function DashboardPage() {
   // Loading & Error States
   const [loading, setLoading] = useState<boolean>(true);
   const [backendError, setBackendError] = useState<string | null>(null);
-  const [tenantId, setTenantId] = useState<string>('tenant-enterprise-prod');
+  const [tenantId, setTenantId] = useState<string>('');
 
   // Search & Filtering
   const [searchFilter, setSearchFilter] = useState('');
@@ -62,6 +62,7 @@ export default function DashboardPage() {
       const stored = getAuthToken();
       if (stored) {
         setTokenInput(stored);
+        setTenantId(getTokenTenant(stored) || '');
       }
     }
   }, []);
@@ -407,7 +408,7 @@ export default function DashboardPage() {
         <header className="flex items-start justify-between mb-7">
           <div>
             <div className="flex items-center gap-2 text-xs text-[#737986] mb-1.5 font-medium">
-              <span>Production SOC Operations</span>
+              <span>SOC Operations</span>
               <span>&middot;</span>
               <span className="font-mono text-[#16945b] font-bold">
                 Backend: {systemHealth ? systemHealth.status : (backendError ? 'OFFLINE' : 'CONNECTING...')}
@@ -417,7 +418,7 @@ export default function DashboardPage() {
             </div>
             <h1 className="text-[27px] font-bold tracking-[-0.04em] m-0 text-[#111318]">Threat Operations</h1>
             <div className="text-[13px] text-[#737986] mt-1.5 font-normal">
-              Autonomous exploit detection, attack graph reconstruction, and policy-governed containment.
+              Evidence-based email triage with analyst-approved containment.
             </div>
           </div>
           <div className="flex gap-2">
@@ -451,14 +452,14 @@ export default function DashboardPage() {
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-bold text-[#111318]">
-                  Live LangGraph Agent Reasoning Stream
+                  Investigation Event Stream
                   {activeStreamingIncidentId && (
                     <span className="text-xs font-mono font-normal text-[#737986] ml-2">
                       ({activeStreamingIncidentId})
                     </span>
                   )}
                 </h2>
-                <p className="text-xs text-[#737986]">Real-time SSE step progression across 6 security nodes</p>
+                <p className="text-xs text-[#737986]">Planner decisions, tool executions and evidence recorded for this investigation</p>
               </div>
               <button onClick={() => setActiveNav('overview')} className="text-xs text-[#2563eb] font-semibold hover:underline">
                 ← Back to Overview
@@ -596,7 +597,7 @@ export default function DashboardPage() {
                   <span>Active Alerts</span>
                 </div>
                 <div className="text-[27px] font-bold tracking-[-0.045em] my-3 text-[#111318]">{metrics.threatsCount}</div>
-                <div className="text-[11px] text-[#d04444] font-medium">Validated threat detections</div>
+                <div className="text-[11px] text-[#d04444] font-medium">Severity HIGH or CRITICAL</div>
               </div>
 
               <div className="bg-white border border-[#e7e9ee] rounded-xl p-[18px_19px] shadow-sm">
@@ -605,16 +606,16 @@ export default function DashboardPage() {
                   <span>Policy Gate (L1)</span>
                 </div>
                 <div className="text-[27px] font-bold tracking-[-0.045em] my-3 text-[#111318]">{metrics.pendingApprovals}</div>
-                <div className="text-[11px] text-[#b7791f] font-medium">Require human cryptographic sign</div>
+                <div className="text-[11px] text-[#b7791f] font-medium">Awaiting analyst approval</div>
               </div>
 
               <div className="bg-white border border-[#e7e9ee] rounded-xl p-[18px_19px] shadow-sm">
                 <div className="flex justify-between text-[#737986] text-xs font-medium">
                   <span>Mean Detection Confidence</span>
-                  <span>Authoritative Heuristics</span>
+                  <span>Verdict engine</span>
                 </div>
                 <div className="text-[27px] font-bold tracking-[-0.045em] my-3 text-[#111318]">{metrics.confidenceRate}</div>
-                <div className="text-[11px] text-[#16945b] font-medium">Grounded in verified artifacts</div>
+                <div className="text-[11px] text-[#16945b] font-medium">Mean verdict confidence</div>
               </div>
             </section>
 
@@ -824,26 +825,22 @@ export default function DashboardPage() {
             </div>
 
             <p className="text-xs text-[#737986] leading-relaxed">
-              FishingMails enforces cryptographic JWT authentication bound to specific tenant boundaries. Provide a signed JSON Web Token or switch active tenant.
+              Paste a JWT issued by your identity provider. The tenant is taken from the token's tenant_id claim.
             </p>
 
             <div className="space-y-3">
               <div>
                 <label className="block text-[11px] font-bold text-[#535963] uppercase tracking-wider mb-1">
-                  Active Tenant Context
+                  Tenant (from token)
                 </label>
-                <input
-                  type="text"
-                  value={tenantId}
-                  onChange={(e) => setTenantId(e.target.value.trim())}
-                  placeholder="e.g. tenant-enterprise-prod"
-                  className="w-full text-xs font-mono p-2.5 bg-[#f8fafc] border border-[#e7e9ee] rounded-lg outline-none focus:border-blue-500"
-                />
+                <div className="w-full text-xs font-mono p-2.5 bg-[#f8fafc] border border-[#e7e9ee] rounded-lg">
+                  {getTokenTenant(tokenInput) || 'No valid token'}
+                </div>
               </div>
 
               <div>
                 <label className="block text-[11px] font-bold text-[#535963] uppercase tracking-wider mb-1">
-                  Bearer JWT Token (Local Storage & SSE Query)
+                  Bearer JWT
                 </label>
                 <textarea
                   rows={4}
@@ -880,6 +877,7 @@ export default function DashboardPage() {
                   onClick={() => {
                     if (tokenInput) {
                       setAuthToken(tokenInput);
+                      setTenantId(getTokenTenant(tokenInput) || '');
                     }
                     setShowAuthModal(false);
                     refreshLedger();

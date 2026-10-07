@@ -78,9 +78,11 @@ class TestFoundation(unittest.TestCase):
             reasoning="Searching for related campaign emails"
         )
         res_low = registry.execute_proposal("tenant-123", low_proposal, autonomy_level=1)
-        self.assertTrue(res_low.success)
         self.assertTrue(res_low.executed)
         self.assertFalse(res_low.requires_human_approval)
+        # No connector configured: executed without approval, but the dispatch is honestly unconfirmed
+        self.assertFalse(res_low.success)
+        self.assertEqual(res_low.output["status"], "NOT_CONFIGURED")
 
         # 2. High risk tool (revoke_session) held for human approval at autonomy level 1
         high_proposal = ToolProposal(

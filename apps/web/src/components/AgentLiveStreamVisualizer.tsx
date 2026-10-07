@@ -25,17 +25,17 @@ export const AgentLiveStreamVisualizer: React.FC<AgentLiveStreamVisualizerProps>
 }) => {
   const [activeStage, setActiveStage] = useState<string>("IDLE");
 
-  // Map backend event types or stages to standard 6 pipeline stages
+  // Map the event types emitted by the backend to the investigation phases
   const mapEventToStage = (event: StreamEvent | AgentLifecycleEvent): string => {
     if ('stage' in event && event.stage) return event.stage;
     const type = event.event_type || '';
-    if (type.includes('start') || type.includes('ingest')) return 'INGESTION';
-    if (type.includes('tool') || type.includes('mime')) return 'ANALYSIS';
-    if (type.includes('intel') || type.includes('threat') || type.includes('cve')) return 'VULN_RESEARCH';
-    if (type.includes('exposure') || type.includes('surface')) return 'EXPOSURE';
-    if (type.includes('evidence') || type.includes('hypothesis') || type.includes('graph')) return 'INVESTIGATION';
-    if (type.includes('proposal') || type.includes('response') || type.includes('completed')) return 'RESPONSE';
-    return 'ANALYSIS';
+    if (type === 'agent.started') return 'START';
+    if (type === 'agent.planner.selected') return 'PLAN';
+    if (type === 'agent.tool.executed') return 'TOOLS';
+    if (type === 'agent.evidence.created') return 'EVIDENCE';
+    if (type === 'agent.proposal.created') return 'APPROVAL';
+    if (type === 'agent.completed' || type === 'agent.failed') return 'DONE';
+    return 'PLAN';
   };
 
   useEffect(() => {
@@ -46,12 +46,12 @@ export const AgentLiveStreamVisualizer: React.FC<AgentLiveStreamVisualizerProps>
   }, [events]);
 
   const stages = [
-    { key: "INGESTION", label: "01 Ingest & Privacy", short: "INGEST" },
-    { key: "ANALYSIS", label: "02 Sandbox & Parse", short: "SANDBOX" },
-    { key: "VULN_RESEARCH", label: "03 Threat Intel", short: "INTEL" },
-    { key: "EXPOSURE", label: "04 Attack Surface", short: "SURFACE" },
-    { key: "INVESTIGATION", label: "05 Dedup & Graph", short: "GRAPH" },
-    { key: "RESPONSE", label: "06 Policy Response", short: "POLICY" },
+    { key: "START", label: "01 Parse email", short: "PARSE" },
+    { key: "PLAN", label: "02 Plan next step", short: "PLAN" },
+    { key: "TOOLS", label: "03 Run tool", short: "TOOL" },
+    { key: "EVIDENCE", label: "04 Record evidence", short: "EVIDENCE" },
+    { key: "APPROVAL", label: "05 Propose response", short: "APPROVAL" },
+    { key: "DONE", label: "06 Verdict", short: "VERDICT" },
   ];
 
   const getEventTag = (type: string) => {
@@ -110,7 +110,7 @@ export const AgentLiveStreamVisualizer: React.FC<AgentLiveStreamVisualizerProps>
           </div>
           <div>
             <h3 className="text-xs font-bold tracking-wider text-[#111318] font-mono flex items-center gap-2 uppercase">
-              LANGGRAPH REASONING STREAM
+              INVESTIGATION EVENTS
               {isStreaming ? (
                 <span className="text-[10px] text-[#1d5eea] font-mono font-bold uppercase px-2 py-0.5 bg-[#f0f4ff] rounded border border-[#1d5eea]/40">
                   LIVE SSE TELEMETRY

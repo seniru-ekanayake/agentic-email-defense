@@ -38,40 +38,32 @@ class TestAgentGraph(unittest.TestCase):
         self.assertEqual(final_state.get("data_classification"), "CONFIDENTIAL")
         self.assertIsNotNone(final_state.get("email_representation"))
 
-        # 2. Verify Sandbox Behavioral Telemetry
-        sandbox = final_state.get("sandbox_telemetry")
-        self.assertIsNotNone(sandbox)
-        self.assertFalse(sandbox["is_benign"])
-        self.assertGreater(len(sandbox["rendering_anomalies"]), 0)
+        # 2. Verify evidence-based verdict (forced-authentication URIs observed by the parser)
+        verdict = final_state["verdict"]
+        inv = final_state["investigation_state"]
+        evidence_types = {e.evidence_type for e in inv.evidence.values()}
+        self.assertTrue(evidence_types & {"MONIKER_URI", "UNC_PATH"})
+        self.assertTrue(verdict.forced_authentication)
+        self.assertEqual(verdict.verdict, "MALICIOUS")
+        self.assertTrue(all(f.evidence_id in inv.evidence for f in verdict.factors))
 
-        # 3. Verify Vulnerability Research
-        vuln_ctx = final_state.get("vulnerability_context", [])
-        self.assertGreater(len(vuln_ctx), 0)
-        cve_ids = [v["cve"] for v in vuln_ctx]
-        self.assertIn("CVE-2023-35636", cve_ids)
-        self.assertIn(str(vuln_ctx[0]["interaction_required"]), ["NONE", "VIEW", "InteractionRequirement.NONE", "InteractionRequirement.VIEW"])
+        # 3. No CVE is invented: search-ms/UNC links are not attributed to a specific CVE
+        self.assertIsNone(verdict.cve)
+        self.assertEqual(final_state.get("vulnerability_context", []), [])
 
-        # 4. Verify Exposed Asset Context
+        # 4. The recipient domain is recorded without fabricated fingerprinting
         asset_ctx = final_state.get("asset_context", [])
-        self.assertGreater(len(asset_ctx), 0)
-        self.assertEqual(asset_ctx[0]["product"], "Microsoft Exchange / Outlook Web Access (OWA)")
+        self.assertEqual(len(asset_ctx), 1)
+        self.assertEqual(asset_ctx[0]["product"], "Unknown (not fingerprinted)")
+        self.assertEqual(asset_ctx[0]["associated_cves"], [])
 
-        # 5. Verify Investigation & Attack Chain
+        # 5. Report and attack chain reflect observed evidence only
         incident = final_state.get("incident_report")
-        self.assertIsNotNone(incident)
         self.assertEqual(incident["interaction_required"], "VIEW")
         self.assertIn(incident["severity"], ["HIGH", "CRITICAL"])
-        self.assertGreaterEqual(incident["confidence"], 0.85)
-        
-        # Check Attack Chain Stages (Dynamic based on observed evidence)
-        attack_chain_stages = [s["stage"] for s in incident["attack_chain"]]
-        self.assertGreaterEqual(len(attack_chain_stages), 2)
-        self.assertIn("INITIAL_ACCESS", attack_chain_stages)
-        self.assertIn("EMAIL_DELIVERY", attack_chain_stages)
-
-        # Check MITRE mapping
-        mitre_tech_ids = [t["technique_id"] for t in incident["mitre_techniques"]]
-        self.assertIn("T1187", mitre_tech_ids)  # Forced Authentication
+        stages = [s["stage"] for s in incident["attack_chain"]]
+        self.assertIn("DELIVERY", stages)
+        self.assertIn("CREDENTIAL_ACCESS", stages)
 
         # 6. Verify Response Planning & Policy Gating
         pending_approvals = final_state.get("pending_approvals", [])
