@@ -37,6 +37,16 @@ class LLMResponse(BaseModel):
     tokens_prompt: int = 0
     tokens_completion: int = 0
     latency_ms: float = 0.0
+    reasoning: Optional[str] = None  # provider-returned thinking text (reasoning models)
+
+
+def free_models_only() -> bool:
+    """Defaults to on: only zero-cost OpenRouter models may be called unless explicitly disabled."""
+    return os.getenv("OPENROUTER_FREE_MODELS_ONLY", "true").strip().lower() not in ("false", "0", "no")
+
+
+def is_free_model(model_id: str) -> bool:
+    return model_id.endswith(":free") or model_id == "openrouter/free"
 
 
 class LLMProvider(ABC):
@@ -144,6 +154,10 @@ class OpenRouterProvider(LLMProvider):
     ) -> LLMResponse:
         target_model = model_id or self.default_model
         api_key = self.api_key
+        if free_models_only() and not is_free_model(target_model):
+            logger.error(f"[LLM GATEWAY] Refusing non-free model '{target_model}' (OPENROUTER_FREE_MODELS_ONLY is enabled).")
+            return LLMResponse(content="", model_used=target_model, status="FAILED", actual_call=False,
+                               engine_type="POLICY_BLOCKED", latency_ms=0.0)
         
         # If no API key is provided, explicitly report NOT_CONFIGURED — never fabricate an LLM response!
         if not api_key or api_key == "mock":
@@ -197,21 +211,12 @@ class OpenRouterProvider(LLMProvider):
             latency_ms = round((t1 - t0) * 1000.0, 2)
 
             if resp.status_code != 200:
-                logger.error(f"OpenRouter HTTP {resp.status_code} error: {resp.text}")
-                if target_model != "openrouter/free":
-                    logger.info("Attempting graceful fallback to 'openrouter/free'...")
-                    return self.generate(
-                        system_prompt=system_prompt,
-                        user_prompt=user_prompt,
-                        model_id="openrouter/free",
-                        tools=tools,
-                        response_schema=response_schema,
-                        temperature=temperature
-                    )
+                # No automatic retry or model switch here: each request counts against provider quotas.
+                logger.error(f"OpenRouter HTTP {resp.status_code} error: {resp.text[:300]}")
                 return LLMResponse(
                     content="",
                     model_used=target_model,
-                    status="FAILED",
+                    status="RATE_LIMITED" if resp.status_code == 429 else "FAILED",
                     actual_call=True,
                     engine_type="LLM",
                     latency_ms=latency_ms
@@ -223,6 +228,9 @@ class OpenRouterProvider(LLMProvider):
 
             content = choice.get("content")
             tool_calls = choice.get("tool_calls")
+            reasoning = choice.get("reasoning")
+            if not reasoning and isinstance(choice.get("reasoning_details"), list):
+                reasoning = "\n".join(str(d.get("text") or d.get("summary") or "") for d in choice["reasoning_details"]).strip() or None
             structured_json = None
 
             if response_schema and content:
@@ -250,7 +258,8 @@ class OpenRouterProvider(LLMProvider):
                 engine_type="LLM",
                 tokens_prompt=usage.get("prompt_tokens", 0),
                 tokens_completion=usage.get("completion_tokens", 0),
-                latency_ms=latency_ms
+                latency_ms=latency_ms,
+                reasoning=reasoning
             )
 
         except Exception as e:
@@ -356,20 +365,24 @@ class LLMGateway:
         prompt: str,
         system_prompt: str = "You are an autonomous tier-3 SOC investigation planner.",
         model_id: Optional[str] = None,
-        temperature: float = 0.1
+        temperature: float = 0.1,
+        json_mode: bool = False
     ) -> Dict[str, Any]:
         """Generates completion via openrouter provider."""
         resp = self.openrouter.generate(
             system_prompt=system_prompt,
             user_prompt=prompt,
             model_id=model_id,
-            temperature=temperature
+            temperature=temperature,
+            response_schema={"type": "object"} if json_mode else None
         )
         return {
             "content": resp.content,
             "status": resp.status,
             "model_used": resp.model_used,
             "actual_call": resp.actual_call,
+            "engine_type": resp.engine_type,
+            "reasoning": resp.reasoning,
             "tokens_prompt": resp.tokens_prompt,
             "tokens_completion": resp.tokens_completion,
             "latency_ms": resp.latency_ms

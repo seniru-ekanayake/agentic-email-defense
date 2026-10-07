@@ -68,6 +68,13 @@ class VulnResearchNode:
                         user_prompt=user_prompt,
                         response_schema={"type": "object"}
                     )
+                    if inv_state is not None and llm_resp.actual_call:
+                        inv_state.llm_calls.append({
+                            "provider": type(provider).__name__, "purpose": f"vulnerability assessment {cve_id}",
+                            "model": llm_resp.model_used, "status": llm_resp.status, "engine": llm_resp.engine_type,
+                            "actual_call": True, "latency_ms": llm_resp.latency_ms,
+                            "tokens_prompt": llm_resp.tokens_prompt, "tokens_completion": llm_resp.tokens_completion,
+                        })
                     merged_dict = base_assessment.model_dump()
                     if llm_resp.actual_call and llm_resp.status == "COMPLETED" and llm_resp.structured_json:
                         if "interaction_required" in llm_resp.structured_json:

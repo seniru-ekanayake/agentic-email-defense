@@ -16,9 +16,12 @@ os.environ["ENVIRONMENT"] = "test"
 os.environ.setdefault("FISHINGMAILS_AUTH_SECRET", "test-only-jwt-secret-not-for-production-0123456789")
 os.environ.setdefault("FISHINGMAILS_APPROVAL_HMAC_SECRET", "test-only-approval-secret-not-for-production-0123")
 os.environ["FISHINGMAILS_DB_PATH"] = os.path.join(tempfile.mkdtemp(prefix="fishingmails-test-"), "test.db")
+# The OpenRouter key is kept only when live LLM tests are explicitly selected (-m llm_live).
+_KEEP_LLM_KEY = "llm_live" in " ".join(sys.argv)
 for var in ("OPENROUTER_API_KEY", "URLHAUS_AUTH_KEY", "MAIL_GATEWAY_URL", "M365_GRAPH_ENDPOINT", "IDP_API_URL",
             "ACTIVE_DIRECTORY_URL", "MAILBOX_SEARCH_URL", "SOC_TICKET_WEBHOOK_URL"):
-    os.environ.pop(var, None)
+    if not (var == "OPENROUTER_API_KEY" and _KEEP_LLM_KEY):
+        os.environ.pop(var, None)
 
 _real_connect = socket.socket.connect
 _real_getaddrinfo = socket.getaddrinfo
@@ -35,6 +38,7 @@ def _is_loopback(host) -> bool:
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "network: test needs real outbound network access")
+    config.addinivalue_line("markers", "llm_live: real OpenRouter calls; needs OPENROUTER_API_KEY (free models only)")
 
 
 def _guarded_connect(sock, address):
@@ -54,8 +58,19 @@ def _guarded_getaddrinfo(host, *args, **kwargs):
         raise socket.gaierror(socket.EAI_NONAME, f"DNS disabled in tests ({host})")
 
 
+_real_sendto = socket.socket.sendto
+
+
+def _guarded_sendto(sock, data, *args):
+    address = args[-1]
+    if not _is_loopback(address[0] if isinstance(address, tuple) else address):
+        raise OSError(f"External network disabled in tests (UDP to {address})")
+    return _real_sendto(sock, data, *args)
+
+
 # Offline for the whole session (including module/session-scoped fixtures).
 socket.socket.connect = _guarded_connect
+socket.socket.sendto = _guarded_sendto
 socket.getaddrinfo = _guarded_getaddrinfo
 
 
@@ -66,11 +81,13 @@ def _network_opt_in(request):
         yield
         return
     socket.socket.connect = _real_connect
+    socket.socket.sendto = _real_sendto
     socket.getaddrinfo = _real_getaddrinfo
     try:
         yield
     finally:
         socket.socket.connect = _guarded_connect
+        socket.socket.sendto = _guarded_sendto
         socket.getaddrinfo = _guarded_getaddrinfo
 
 

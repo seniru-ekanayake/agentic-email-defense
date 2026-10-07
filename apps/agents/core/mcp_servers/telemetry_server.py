@@ -79,10 +79,8 @@ def process_request(line: str) -> str:
 
 
 def main():
-    for line in sys.stdin:
-        if line.strip():
-            sys.stdout.write(process_request(line) + "\n")
-            sys.stdout.flush()
+    from apps.agents.core.mcp_servers.mcp_stdio import serve
+    serve(process_request, "fishingmails-telemetry")
 
 
 if __name__ == "__main__":

@@ -89,6 +89,12 @@ class DecisionRecord(BaseModel):
     result_observed: str = ""
     belief_state_impact: str = ""
     next_planned_action: str = ""
+    planner_type: str = "RULE"
+    model: Optional[str] = None
+    reasoning_steps: List[str] = Field(default_factory=list)
+    reasoning_trace: Optional[str] = None
+    llm_proposal: Optional[Dict[str, Any]] = None
+    override_reason: Optional[str] = None
 
 
 class ToolExecutionRecord(BaseModel):

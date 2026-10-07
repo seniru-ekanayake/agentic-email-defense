@@ -19,7 +19,8 @@
 ## Investigation flow
 
 ```
-POST /api/v1/investigate (.eml)
+POST /api/v1/investigations (.eml)  → 202 {incident_id}; runs in a worker thread
+  (POST /api/v1/investigate is the synchronous variant)
   │
   ├─ IngestionNode ── MimeParser.parse_eml
   │
@@ -27,13 +28,17 @@ POST /api/v1/investigate (.eml)
   │     AUTHENTICATION (PASS / FAIL / UNKNOWN), URL_NORMALIZED, DECEPTIVE_LINK,
   │     UNICODE_ANOMALY, MONIKER_URI, UNC_PATH, ACTIVE_SCRIPT, DATA_URI, CVE_CANDIDATE
   │
-  ├─ Planner loop (max 15 steps)
+  ├─ Match forensic playbooks (apps/agents/skills) → activated_skills + LLM guidance
+  │
+  ├─ Planner loop (max 15 steps); before each step an agent.thinking event is streamed
   │     questions: Q-01 auth · Q-02 unicode · Q-03 link reputation · Q-04 forced auth
   │                Q-05 attachments · Q-06 KEV status of a referenced CVE
   │     tools (read-only): UnicodeAnalyzer, ThreatIntelFeeds (Quad9 + URLhaus),
   │                        UrlSandboxRunner, AttachmentAnalyzer, dns_spf_dmarc_recon,
   │                        query_sender_history, CisaKevCorrelator
   │     each result is stored as typed evidence; the planner re-plans on it
+  │     each decision records reasoning_steps, the LLM's thought text (reasoning_trace),
+  │     the LLM proposal and any override_reason, and streams them as agent.planner.selected
   │
   ├─ ExposureNode ── records the recipient domain (no fingerprinting without real data)
   ├─ VulnResearchNode ── NVD/KEV context for CVE candidates only
@@ -41,7 +46,7 @@ POST /api/v1/investigate (.eml)
   ├─ InvestigationNode ── title, attack chain, MITRE mapping from observed evidence
   └─ ResponseNode ── proposals from the verdict; MEDIUM+ actions held for approval
   │
-  └─ persisted to SQLite; events available via SSE replay
+  └─ persisted to SQLite; GET /api/v1/investigations/{id}/events streams live, then replays from storage
 ```
 
 ## Verdict scoring
@@ -83,5 +88,17 @@ SQLite with WAL at `FISHINGMAILS_DB_PATH`. Tables: `incidents`, `evidence_items`
 These are present and unit-tested but not called by the API: mailbox ingestion adapters
 (`apps/agents/ingestion/`), SIEM forwarder (`packages/threat_intel/src/siem_forwarder.py`), and the
 Neo4j attack-graph repository (`packages/attack_graph/src/neo4j_repository.py`). The DNS and telemetry
-helpers in `apps/agents/core/mcp_servers/` are called in-process and can also run as stdio JSON-RPC
-servers.
+helpers in `apps/agents/core/mcp_servers/` are called in-process by the pipeline and can also run as MCP
+stdio servers (`initialize`, `tools/list`, `tools/call`) for any MCP client.
+
+## Live events
+
+| Event | Meaning |
+| --- | --- |
+| `agent.started` | Investigation accepted |
+| `agent.thinking` | Planner deciding the next step (step number, open questions) |
+| `agent.planner.selected` | Decision with rationale, reasoning steps, thought text, LLM proposal, override reason |
+| `agent.tool.executed` | Tool finished (duration, status) |
+| `agent.evidence.created` | New typed evidence record |
+| `agent.proposal.created` | Containment proposal awaiting approval (carries the approval token) |
+| `agent.completed` / `agent.failed` | Terminal events; the stream closes after them |

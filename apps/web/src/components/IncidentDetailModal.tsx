@@ -1,5 +1,6 @@
 'use client';
 
+import { ReasoningCard } from "@/components/ReasoningCard";
 import React, { useState } from 'react';
 import { ComprehensiveIncidentRecord, PendingApproval } from '@/lib/api/types';
 
@@ -274,13 +275,21 @@ export function IncidentDetailModal({
                       <span className="font-mono text-[10px] font-bold text-purple-600">{dec.decision_id} · {dec.action}</span>
                       <span className="text-[10px] font-mono text-[#737986]">{dec.confidence} CONFIDENCE</span>
                     </div>
-                    <div className="text-xs text-[#111318] font-medium">{dec.decision}</div>
-                    <div className="text-[11px] text-[#505660]">{dec.reason}</div>
-                    {dec.observed && (
-                      <div className="text-[10px] text-[#737986] bg-white p-2 rounded border border-[#e7e9ee] font-mono">
-                        Observed: {dec.observed}
-                      </div>
-                    )}
+                    <ReasoningCard
+                      action={dec.decision.startsWith('RUN_TOOL') ? 'RUN_TOOL' : 'STOP'}
+                      tool={dec.decision.startsWith('RUN_TOOL') ? dec.action : null}
+                      plannerType={dec.planner_type}
+                      model={dec.model}
+                      rationale={dec.reason}
+                      steps={dec.reasoning_steps}
+                      thoughts={dec.reasoning_trace}
+                      overrideReason={dec.override_reason}
+                      llmProposal={dec.llm_proposal}
+                    />
+                    <div className="text-[10px] text-[#737986] font-mono">
+                      Result: {dec.result}
+                      {dec.trigger_evidence_ids && dec.trigger_evidence_ids.length > 0 && <> · evidence {dec.trigger_evidence_ids.join(', ')}</>}
+                    </div>
                   </div>
                 ))}
               </div>

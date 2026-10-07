@@ -1,0 +1,16 @@
+path,label
+tests/fixtures/corpus/01_benign_auth_pass.eml,benign
+tests/fixtures/corpus/02_benign_no_auth_header.eml,benign
+tests/fixtures/corpus/03_benign_newsletter_mentions_cve.eml,benign
+tests/fixtures/corpus/05_benign_with_url_auth_pass.eml,benign
+tests/fixtures/corpus/08_malformed.eml,benign
+tests/fixtures/corpus/10_benign_html_newsletter.eml,benign
+tests/fixtures/benign-control-73922.eml,benign
+tests/fixtures/corpus/06_rtlo_subject.eml,suspicious
+tests/fixtures/corpus/07_prompt_injection.eml,suspicious
+tests/fixtures/corpus/11_deceptive_link_auth_pass.eml,suspicious
+tests/fixtures/corpus/04_phish_spf_fail_url.eml,malicious
+tests/fixtures/corpus/09_monikerlink_cve_2024_21413.eml,malicious
+packages/email_parser/samples/synthetic_cve_2023_35636_rendering_exploit.eml,malicious
+tests/fixtures/frontend-ui-causality-73921.eml,malicious
+tests/fixtures/live-llm-causality-73921.eml,malicious

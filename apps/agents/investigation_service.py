@@ -74,6 +74,7 @@ class ComprehensiveIncidentRecord(BaseModel):
     recommended_actions: List[Dict[str, Any]] = Field(default_factory=list)
     pending_approvals: List[Dict[str, Any]] = Field(default_factory=list)
     resolved_approvals: List[Dict[str, Any]] = Field(default_factory=list)
+    activated_skills: List[str] = Field(default_factory=list)
     graph_context: Optional[Dict[str, Any]] = None
 
     # Core Grounding Artifacts
@@ -98,6 +99,10 @@ class ComprehensiveIncidentRecord(BaseModel):
 
 # Alias for backwards compatibility
 IncidentRecord = ComprehensiveIncidentRecord
+
+
+def new_incident_id() -> str:
+    return f"INC-{uuid.uuid4().hex[:6].upper()}"
 
 
 def _confidence_level(value: float) -> ConfidenceLevel:
@@ -125,11 +130,12 @@ class InvestigationService:
         tenant_id: str,
         raw_eml: bytes,
         autonomy_level: int = 1,
-        source_filename: str = "inbound_email.eml"
+        source_filename: str = "inbound_email.eml",
+        incident_id: Optional[str] = None
     ) -> ComprehensiveIncidentRecord:
         """Runs the investigation pipeline and assembles a report strictly from recorded evidence."""
         t0 = time.time()
-        incident_id = f"INC-{uuid.uuid4().hex[:6].upper()}"
+        incident_id = incident_id or new_incident_id()
         agent_run_id = f"run-{uuid.uuid4().hex[:8]}"
         state_machine = InvestigationStateMachine(incident_id)
         state_machine.transition_to(AgentState.INITIALIZING, reason="Allocated investigation worker")
@@ -235,6 +241,12 @@ class InvestigationService:
                                  else f"Stopped: {d.stop_reason or d.action}"),
                 belief_state_impact=f"Confidence {d.confidence_before:.2f} -> {d.confidence_after:.2f}",
                 next_planned_action="Re-plan with updated evidence" if d.action == "RUN_TOOL" else "Compute verdict",
+                planner_type=d.planner_type,
+                model=d.model,
+                reasoning_steps=d.reasoning_steps,
+                reasoning_trace=d.reasoning_trace,
+                llm_proposal=d.llm_proposal,
+                override_reason=d.override_reason,
             ))
 
         # --- Tool executions: only tools that actually ran ---
@@ -426,6 +438,7 @@ class InvestigationService:
             evidence_summary=report.get("evidence_summary", []),
             recommended_actions=report.get("recommended_actions", []),
             pending_approvals=pending_approvals,
+            activated_skills=list(inv.activated_skills),
             evidence_items=evidence_items,
             hypotheses=hypotheses,
             decision_trace=decision_trace,

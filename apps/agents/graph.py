@@ -227,9 +227,13 @@ class SecurityGraph:
 
         try:
             from packages.schemas.python.models import EmailAttackRepresentation
-            state["activated_skills"] = [s.name for s in self.skill_registry.match_skills(EmailAttackRepresentation(**rep))]
-        except Exception:
-            state["activated_skills"] = []
+            skills = self.skill_registry.match_skills(EmailAttackRepresentation(**rep))
+        except Exception as exc:
+            logger.warning(f"Skill matching failed: {exc}")
+            skills = []
+        inv_state.activated_skills = [s.name for s in skills]
+        inv_state.playbook_context = self.skill_registry.build_skill_prompt_context(skills)[:3000]
+        state["activated_skills"] = inv_state.activated_skills
 
         active_planner = self.planner or select_planner(
             mode=state.get("planner_mode") or self.planner_mode or "HYBRID",
@@ -250,7 +254,16 @@ class SecurityGraph:
             e_idx += 1
             return ev
 
+        step = 0
         while inv_state.remaining_budget_steps > 0:
+            step += 1
+            open_qs = [q.id for q in inv_state.questions.values() if q.status == "UNRESOLVED"]
+            event_manager.publish_event(
+                investigation_id=incident_id, agent_run_id=agent_run_id, event_type="agent.thinking",
+                message=f"Planner ({inv_state.planner_requested}) is deciding step {step}",
+                status="RUNNING", data={"step": step, "planner": inv_state.planner_requested, "open_questions": open_qs,
+                                        "evidence_count": len(inv_state.evidence)}
+            )
             decision = active_planner.propose_next_action(inv_state, available_tools, permissions)
             inv_state.decisions.append(decision)
             inv_state.remaining_budget_steps -= 1
@@ -260,7 +273,11 @@ class SecurityGraph:
                 status="SUCCESS", decision_id=decision.decision_id, tool=decision.tool_name,
                 data={"planner_type": decision.planner_type, "engine_type": decision.engine_type, "action": decision.action,
                       "tool": decision.tool_name, "arbitration": decision.arbitration,
-                      "expected_gain": decision.expected_information_gain, "confidence": decision.confidence}
+                      "expected_gain": decision.expected_information_gain, "confidence": decision.confidence,
+                      "rationale": decision.rationale, "reasoning_steps": decision.reasoning_steps,
+                      "reasoning_trace": decision.reasoning_trace, "llm_proposal": decision.llm_proposal,
+                      "override_reason": decision.override_reason, "model": decision.model,
+                      "latency_ms": decision.latency_ms, "alternatives": decision.alternatives_considered[:6]}
             )
 
             if decision.action != "RUN_TOOL":

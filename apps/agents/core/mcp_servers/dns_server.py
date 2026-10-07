@@ -224,12 +224,8 @@ def process_request(line: str) -> str:
 
 
 def main():
-    for line in sys.stdin:
-        if not line.strip():
-            continue
-        res = process_request(line)
-        sys.stdout.write(res + "\n")
-        sys.stdout.flush()
+    from apps.agents.core.mcp_servers.mcp_stdio import serve
+    serve(process_request, "fishingmails-dns")
 
 
 if __name__ == "__main__":
