@@ -1,0 +1,11 @@
+From: "Security Weekly" <news@securityweekly.com>
+To: "Bob Jones" <bob@acme-widgets.com>
+Subject: This week: CVE-2023-35636 retrospective and search-ms: handler hardening
+Date: Mon, 05 Oct 2026 10:00:00 +0000
+Message-ID: <news-003@securityweekly.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Authentication-Results: mx.acme-widgets.com; spf=pass; dkim=pass; dmarc=pass
+
+This week we discuss how attackers abused the search-ms: protocol handler and file: URIs.
+Patch guidance for CVE-2023-35636 is in our archive. No links in this issue.

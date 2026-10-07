@@ -1,0 +1,10 @@
+From: "PayPal Security" <service@paypa1-security-alerts.com>
+To: "Bob Jones" <bob@acme-widgets.com>
+Subject: Your account has been limited - verify now
+Date: Mon, 05 Oct 2026 10:00:00 +0000
+Message-ID: <phish-004@paypa1-security-alerts.com>
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+Authentication-Results: mx.acme-widgets.com; spf=fail smtp.mailfrom=paypa1-security-alerts.com; dmarc=fail
+
+<html><body><p>We noticed unusual activity. <a href="http://paypa1-verify-account.example.org/login">https://www.paypal.com/verify</a></p></body></html>

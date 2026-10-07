@@ -1,93 +1,67 @@
 """
-End-to-End Test for the Master Demo Scenario:
-Synthetic EML -> Deterministic Parser -> Static Analysis -> Simulated Webmail Exposure ->
-Simulated Vulnerability (CVE-2023-35636) -> Safe Sandbox Behavior -> Synthetic Identity Event ->
-Attack Graph -> LangGraph Investigation -> Incident Creation -> Evidence-based Explanation ->
-Response Proposal & Human-in-the-Loop Approval.
+End-to-end scenario through the HTTP API: a forced-authentication phishing email is investigated,
+containment is proposed, a responder approves it, and the configured mail-gateway connector
+receives the quarantine request. A benign email in the same tenant produces no actions.
 """
 
-import os
-import sys
-import unittest
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
-# Ensure root is in sys.path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
+from fastapi.testclient import TestClient
 
-from apps.agents.investigation_service import InvestigationService
+from apps.server import app
+from apps.agents.core.security_principal import create_principal_token
 
-
-class TestDemoScenario(unittest.TestCase):
-
-    def setUp(self):
-        self.service = InvestigationService()
-        self.sample_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../packages/email_parser/samples/synthetic_cve_2023_35636_rendering_exploit.eml"))
-
-    def test_full_synthetic_demo_scenario(self):
-        tenant_id = "tenant-enterprise-demo"
-
-        # 1. Step 1: Simulate Exposed Asset
-        asset_rec = self.service.simulate_asset(tenant_id, {
-            "host": "owa.enterprise-corp.internal",
-            "product": "Microsoft Exchange / Outlook Web Access (OWA)",
-            "version": "15.1.2507.17"
-        })
-        self.assertEqual(asset_rec["host"], "owa.enterprise-corp.internal")
-
-        # 2. Step 2: Ingest Synthetic Rendering Exploit Email
-        with open(self.sample_path, "rb") as f:
-            raw_eml = f.read()
-
-        incident = self.service.simulate_email(tenant_id, raw_eml)
-
-        # 3. Step 3: Simulate Post-Exploitation Identity Telemetry
-        identity_event = self.service.simulate_identity_event(tenant_id, {
-            "user_id": incident.target_identity,
-            "source_ip": "198.51.100.42",
-            "event_type": "ANOMALOUS_NTLM_RELAY_AUTHENTICATION"
-        })
-        self.assertEqual(identity_event["status"], "LOGGED")
-
-        # 4. Step 4: Verify Incident Properties & Exact Demo Requirements
-        self.assertIn(incident.severity, ["HIGH", "CRITICAL"])
-        self.assertGreaterEqual(incident.confidence, 0.90)
-        self.assertEqual(incident.target_identity, "cfo@enterprise-corp.internal")
-        self.assertEqual(incident.mail_platform, "Microsoft Exchange / Outlook Web Access (OWA)")
-        self.assertEqual(incident.exposure_status, "Internet-Facing")
-        self.assertEqual(incident.cve, "CVE-2023-35636")
-        
-        # Mandatory Check: Interaction Required is strictly VIEW
-        self.assertEqual(incident.interaction_required, "VIEW")
-
-        # 5. Step 5: Verify Reconstructed Attack Chain
-        self.assertGreaterEqual(len(incident.attack_chain), 2)
-        chain_stages = [s["stage"] for s in incident.attack_chain]
-        self.assertIn("INITIAL_ACCESS", chain_stages)
-        self.assertIn("EMAIL_DELIVERY", chain_stages)
-
-        # 6. Step 6: Verify Attack Graph
-        graph_data = self.service.get_attack_graph(incident.incident_id)
-        node_labels = [n.label for n in graph_data.nodes]
-        self.assertIn("ThreatActor", node_labels)
-        self.assertIn("Campaign", node_labels)
-        self.assertIn("Email", node_labels)
-        self.assertIn("CVE", node_labels)
-        self.assertIn("Asset", node_labels)
-        self.assertIn("Identity", node_labels)
-        self.assertIn("Session", node_labels)
-
-        # 7. Step 7: Verify Recommended Actions & Human Approval Gate
-        self.assertGreater(len(incident.pending_approvals), 0)
-        approval_token = incident.pending_approvals[0]["approval_token"]
-        self.assertTrue(approval_token.startswith("APP-"))
-
-        # 8. Step 8: Execute Human-in-the-Loop Response
-        exec_result = self.service.security_graph.response_node.tool_registry.approve_and_execute(
-            approval_token=approval_token,
-            approver_user_id="lead_soc_analyst"
-        )
-        self.assertTrue(exec_result.executed)
-        self.assertIn(exec_result.output["status"], ["SUCCESS", "NOT_CONFIGURED"])
+SAMPLE = "packages/email_parser/samples/synthetic_cve_2023_35636_rendering_exploit.eml"
+BENIGN = "tests/fixtures/benign-control-73922.eml"
 
 
-if __name__ == "__main__":
-    unittest.main()
+def _headers(roles):
+    return {"Authorization": "Bearer " + create_principal_token("e2e", "tenant-e2e", roles)}
+
+
+def test_phishing_to_confirmed_quarantine(monkeypatch):
+    received = []
+
+    class MailGateway(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            received.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"quarantined_count": 1}')
+
+    gateway = HTTPServer(("127.0.0.1", 0), MailGateway)
+    threading.Thread(target=gateway.serve_forever, daemon=True).start()
+    monkeypatch.setenv("MAIL_GATEWAY_URL", f"http://127.0.0.1:{gateway.server_port}/quarantine")
+
+    client = TestClient(app)
+    analyst, responder = _headers(["SOC_ANALYST"]), _headers(["INCIDENT_RESPONDER"])
+    try:
+        with open(BENIGN, "rb") as f:
+            benign = client.post("/api/v1/investigate", headers=analyst, files={"file": ("benign.eml", f.read())}).json()
+        assert benign["severity"] == "LOW" and benign["pending_approvals"] == []
+
+        with open(SAMPLE, "rb") as f:
+            inc = client.post("/api/v1/investigate", headers=analyst, files={"file": ("phish.eml", f.read())}).json()
+        assert inc["severity"] == "CRITICAL"
+        assert inc["threat_category"] == "Forced Authentication (Moniker/UNC)"
+        assert {p["tool_name"] for p in inc["pending_approvals"]} == {"quarantine_email", "revoke_session"}
+
+        listed = client.get("/api/v1/incidents", headers=analyst).json()
+        assert {i["incident_id"] for i in listed} >= {inc["incident_id"], benign["incident_id"]}
+
+        token = next(p["approval_token"] for p in inc["pending_approvals"] if p["tool_name"] == "quarantine_email")
+        r = client.post(f"/api/v1/approve/{token}", headers=responder)
+        assert r.status_code == 200 and r.json()["status"] == "DISPATCHED"
+        assert received == [{"action": "quarantine_email", "parameters": {"message_id": inc["pending_approvals"][0]["parameters"]["message_id"],
+                                                                         "mailbox": inc["recipient"]}, "timestamp": received[0]["timestamp"]}]
+
+        audit = client.get("/api/v1/audit-logs", headers=analyst).json()
+        assert any(a["action"] == "APPROVAL_ATTEMPT" and a["details"]["success"] for a in audit)
+    finally:
+        gateway.shutdown()

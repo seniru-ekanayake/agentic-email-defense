@@ -22,7 +22,7 @@ class VulnResearchNode:
         self.nvd = NvdIngestor()
         self.kev_ingestor = CisaKevIngestor()
         self.analyzer = EmailExploitabilityAnalyzer()
-        self.gateway = llm_gateway or LLMGateway()
+        self.gateway = llm_gateway or LLMGateway.get_instance()
         self.kev_map = {r.cve_id: r for r in self.kev_ingestor.ingest(live=False)}
 
     def execute(self, state: SecurityState) -> SecurityState:
@@ -35,9 +35,12 @@ class VulnResearchNode:
                 if cve not in cves_to_research:
                     cves_to_research.append(cve)
 
-        for ev in state.get("evidence", []):
-            if ev.get("cve") and ev["cve"] not in cves_to_research:
-                cves_to_research.append(ev["cve"])
+        inv_state = state.get("investigation_state")
+        if inv_state is not None:
+            for ev in inv_state.evidence.values():
+                cve = ev.metadata.get("cve_id") if ev.evidence_type in ("CVE_CANDIDATE", "CISA_KEV_MATCH") else None
+                if cve and cve not in cves_to_research:
+                    cves_to_research.append(cve)
 
         assessments: List[Dict[str, Any]] = []
 

@@ -8,12 +8,8 @@ import uvicorn
 from fastapi.testclient import TestClient
 import requests
 
-sys.path.insert(0, r"c:\Enterprise Agentic Email Exploitation Detection & Response Platform")
 
 # Setup for testing
-os.environ["FISHINGMAILS_ENV"] = "test"
-os.environ["FISHINGMAILS_AUTH_SECRET"] = "fishingmails-prod-enterprise-agentic-jwt-signing-key-32bytes-min"
-os.environ["FISHINGMAILS_APPROVAL_HMAC_SECRET"] = "test-hmac-secret-key-that-is-long-enough"
 
 from apps.server import app
 from apps.agents.core.security_principal import create_principal_token
@@ -88,11 +84,8 @@ import threading
 import json
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, r"c:\Enterprise Agentic Email Exploitation Detection & Response Platform")
 
 # Setup for testing
-os.environ["FISHINGMAILS_ENV"] = "test"
-os.environ["FISHINGMAILS_AUTH_SECRET"] = "fishingmails-prod-enterprise-agentic-jwt-signing-key-32bytes-min"
 
 from apps.agents.core.tool_registry import ToolRegistry
 
@@ -101,10 +94,14 @@ def test_H_cisa_kev_correlator_dynamic():
     tr = ToolRegistry.get_instance()
     
     # 1. Known KEV entry -> positive
-    res1 = tr._cisa_kev_handler({"cve_id": "CVE-2023-35636"})
+    res1 = tr._cisa_kev_handler({"cve_id": "CVE-2024-21413"})
     assert res1["is_in_kev"] is True
     assert res1["status"] == "VERIFIED"
-    assert res1["provenance"]["catalog_version"] == "2024.01.15"
+    with open(res1["provenance"]["dataset_path"], encoding="utf-8") as f:
+        assert res1["provenance"]["catalog_version"] == json.load(f)["catalogVersion"]
+
+    # CVE-2023-35636 is not in CISA KEV and must not be reported as such
+    assert tr._cisa_kev_handler({"cve_id": "CVE-2023-35636"})["is_in_kev"] is False
     
     # 2. Random non-KEV IOC -> negative
     res2 = tr._cisa_kev_handler({"cve_id": "CVE-9999-99999"})
@@ -180,12 +177,16 @@ def test_C_sandbox_ssrf_redirect():
         # but block the redirect to 127.0.0.1:80
         original_evaluate = runner.network_guard.evaluate_destination
         
-        def mock_evaluate(target_url):
+        def mock_evaluate(target_url, resolve=False):
             if f":{port}/" in target_url:
                 return True, "Allowed", False
-            return original_evaluate(target_url)
-            
+            return original_evaluate(target_url, resolve=resolve)
+
         runner.network_guard.evaluate_destination = mock_evaluate
+        # Allow the connect-time peer check to reach the local test server only.
+        from apps.sandbox.src import safe_http
+        original_peer = safe_http.is_allowed_peer
+        safe_http.is_allowed_peer = lambda addr: True
         
         report = runner.analyze_url(url)
         assert report.network_guard_blocked is True
@@ -193,5 +194,6 @@ def test_C_sandbox_ssrf_redirect():
         assert "NetworkGuard blocked dynamic redirect hop 'http://127.0.0.1:80'" in str(report.evidence)
         
     finally:
+        safe_http.is_allowed_peer = original_peer
         httpd.shutdown()
         httpd.server_close()

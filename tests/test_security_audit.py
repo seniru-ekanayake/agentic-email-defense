@@ -7,9 +7,6 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # Must be set before importing app
-os.environ["FISHINGMAILS_ENV"] = "test"
-os.environ["FISHINGMAILS_AUTH_SECRET"] = "fishingmails-prod-enterprise-agentic-jwt-signing-key-32bytes-min"
-os.environ["FISHINGMAILS_APPROVAL_HMAC_SECRET"] = "test-hmac-secret-key-that-is-long-enough"
 
 from apps.server import app
 from apps.agents.core.security_principal import create_principal_token
@@ -128,10 +125,10 @@ def test_double_spend_race():
     am = ApprovalManager.get_instance()
     valid_token = am.create_pending_approval(
         tenant_id="tenant-enterprise-prod",
-        tool_name="test_tool",
-        parameters={"test": "data"}
+        tool_name="create_soc_ticket",
+        parameters={"title": "race"}
     )
-    
+
     results = []
     
     def approve_req():
@@ -148,6 +145,5 @@ def test_double_spend_race():
     t1.join()
     t2.join()
     
-    # One should succeed (200), one should fail (400 - already claimed/consumed)
-    # Actually wait, test_tool is not registered. It will fail execution, but approval logic is tested.
-    assert results.count(400) >= 1
+    # Exactly one request claims the token (dispatch is unconfigured -> 502); the other is rejected as already claimed.
+    assert sorted(results) == [400, 502], results

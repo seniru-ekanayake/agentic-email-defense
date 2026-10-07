@@ -226,15 +226,15 @@ export interface AgentLifecycleEvent {
 export interface SystemHealthResponse {
   status: 'HEALTHY' | 'DEGRADED';
   timestamp: string;
+  environment: string;
   mode: string;
   is_production: boolean;
-  mock_mode: string;
-  demo_fixtures: string;
-  subsystems: Record<string, string>;
+  database: string;
+  integrations: Record<string, string>;
 }
 
 export interface ApprovalResponse {
-  status: 'SUCCESS' | 'REJECTED' | 'ERROR';
+  status: 'DISPATCHED' | 'REJECTED' | 'RECORDED';
   message: string;
   output?: any;
 }

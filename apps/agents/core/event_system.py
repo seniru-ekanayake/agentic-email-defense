@@ -98,26 +98,49 @@ class EventStreamManager:
 
         return event
 
-    def get_events(self, investigation_id: str) -> List[AgentLifecycleEvent]:
-        """Returns all recorded events for an investigation."""
-        return self._investigation_events.get(investigation_id, [])
+    TERMINAL_EVENTS = ("agent.completed", "agent.failed")
 
-    async def subscribe(self, investigation_id: str) -> AsyncGenerator[AgentLifecycleEvent, None]:
-        """Subscribes an SSE consumer to real-time events for an active investigation."""
+    def get_events(self, investigation_id: str) -> List[AgentLifecycleEvent]:
+        """Returns recorded events, falling back to durable storage once the in-memory buffer is released."""
+        if investigation_id in self._investigation_events:
+            return self._investigation_events[investigation_id]
+        try:
+            from apps.agents.core.durable_storage import DurableStorage
+            return [AgentLifecycleEvent(**e) for e in DurableStorage.get_instance().get_events(investigation_id)]
+        except Exception:
+            return []
+
+    def forget(self, investigation_id: str) -> None:
+        """Releases the in-memory buffer for a persisted investigation (bounded memory)."""
+        if not self._subscribers.get(investigation_id):
+            self._investigation_events.pop(investigation_id, None)
+
+    async def subscribe(self, investigation_id: str, heartbeat_seconds: float = 15.0,
+                        max_seconds: float = 600.0) -> AsyncGenerator[Optional[AgentLifecycleEvent], None]:
+        """
+        Replays recorded events, then streams new ones until a terminal event.
+        Yields None as a heartbeat while waiting. Ends immediately if the investigation already finished.
+        """
         queue: asyncio.Queue = asyncio.Queue()
         self._subscribers.setdefault(investigation_id, []).append(queue)
-
-        # First flush any already recorded events
-        existing = self._investigation_events.get(investigation_id, [])
-        for ev in existing:
-            yield ev
-
         try:
-            while True:
-                event = await queue.get()
+            existing = list(self.get_events(investigation_id))
+            for ev in existing:
+                yield ev
+            if any(ev.event_type in self.TERMINAL_EVENTS for ev in existing):
+                return
+            loop = asyncio.get_event_loop()
+            deadline = loop.time() + max_seconds
+            while loop.time() < deadline:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=heartbeat_seconds)
+                except asyncio.TimeoutError:
+                    yield None
+                    continue
                 yield event
-                if event.event_type in ["agent.completed", "agent.failed"]:
-                    break
+                if event.event_type in self.TERMINAL_EVENTS:
+                    return
         finally:
-            if investigation_id in self._subscribers and queue in self._subscribers[investigation_id]:
-                self._subscribers[investigation_id].remove(queue)
+            subs = self._subscribers.get(investigation_id, [])
+            if queue in subs:
+                subs.remove(queue)

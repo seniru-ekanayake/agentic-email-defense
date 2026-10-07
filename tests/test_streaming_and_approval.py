@@ -1,6 +1,5 @@
 import asyncio
 import pytest
-from apps.agents.streaming_service import SecurityGraphStreamer, AgentEvent
 from apps.agents.core.approval_manager import ApprovalManager
 from packages.schemas.python.models import (
     SecurityState,
@@ -40,28 +39,30 @@ def create_sample_state() -> SecurityState:
     )
 
 
-@pytest.mark.asyncio
-async def test_security_graph_streamer():
-    streamer = SecurityGraphStreamer()
-    state = create_sample_state()
+def test_approval_manager_lifecycle(monkeypatch):
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
 
-    events = []
-    async for event in streamer.stream_execution(state):
-        events.append(event)
-        assert isinstance(event, AgentEvent)
-        assert event.stage in ("INGESTION", "ANALYSIS", "VULN_RESEARCH", "EXPOSURE", "INVESTIGATION", "RESPONSE")
-        sse_line = event.to_sse_line()
-        assert sse_line.startswith(f"event: {event.event_type}\n")
+    received = []
 
-    event_types = [e.event_type for e in events]
-    assert "stage_start" in event_types
-    assert "thought" in event_types
-    assert "skill_activated" in event_types
-    assert "proposal" in event_types
-    assert "complete" in event_types
+    class Connector(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
 
+        def do_POST(self):
+            received.append((self.headers.get("Authorization"), json.loads(self.rfile.read(int(self.headers["Content-Length"])))))
+            body = json.dumps({"reset_flagged": True}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
 
-def test_approval_manager_lifecycle():
+    server = HTTPServer(("127.0.0.1", 0), Connector)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    monkeypatch.setenv("IDP_PASSWORD_RESET_URL", f"http://127.0.0.1:{server.server_port}/reset")
+    monkeypatch.setenv("IDP_PASSWORD_RESET_TOKEN", "connector-test-token")
+
     manager = ApprovalManager()
     manager.clear()
 
@@ -92,6 +93,11 @@ def test_approval_manager_lifecycle():
     assert res["executed"] is True
     assert res["tool_name"] == "force_password_reset"
     assert "audit_id" in res
+    # The connector really received the approved action
+    assert received and received[0][0] == "Bearer connector-test-token"
+    assert received[0][1]["action"] == "force_password_reset"
+    assert received[0][1]["parameters"]["user_id"] == "cfo@victim-corp.com"
+    server.shutdown()
 
     # 3. Double-execution prevention
     duplicate_res = manager.authorize_and_execute(

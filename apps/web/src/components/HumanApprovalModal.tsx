@@ -41,10 +41,7 @@ export const HumanApprovalModal: React.FC<HumanApprovalModalProps> = ({
     setLoading(true);
     try {
       const res = await approveAction(token, { tenantId });
-      const execState = res.output?.execution_state || res.output?.status;
-      const isDispatchFailed = execState === 'DISPATCH_FAILED' || execState === 'NOT_CONFIGURED';
-
-      if (res.status === 'SUCCESS' && !isDispatchFailed) {
+      if (res.status === 'DISPATCHED') {
         setResultMessage({
           type: "success",
           text: res.message || `Action authorized with signed cryptographic token: ${token}`,
@@ -54,18 +51,20 @@ export const HumanApprovalModal: React.FC<HumanApprovalModalProps> = ({
           onClose();
           setSliderValue(0);
         }, 1500);
-      } else if (isDispatchFailed) {
-        setResultMessage({
-          type: "error",
-          text: `Action approved, but external connector execution failed (${execState}): ${res.output?.error || 'Integration not configured'}`,
-        });
-        setSliderValue(0);
       } else {
         setResultMessage({ type: "error", text: res.message || "Execution authorization denied." });
         setSliderValue(0);
       }
     } catch (e: any) {
-      setResultMessage({ type: "error", text: e.message || "An unexpected error occurred during approval." });
+      if (e?.status === 502) {
+        const out = e.data?.detail?.output || {};
+        setResultMessage({
+          type: "error",
+          text: `Approval recorded, but the connector did not confirm the action (${out.status || 'DISPATCH_FAILED'}): ${out.detail || e.message}`,
+        });
+      } else {
+        setResultMessage({ type: "error", text: e.message || "An unexpected error occurred during approval." });
+      }
       setSliderValue(0);
     } finally {
       setLoading(false);

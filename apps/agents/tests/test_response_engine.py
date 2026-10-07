@@ -171,7 +171,9 @@ class TestResponseEngine(unittest.TestCase):
         )
         res_ticket = self.policy_engine.evaluate_and_execute("tenant-tools", prop_ticket)
         self.assertTrue(res_ticket.executed)
-        self.assertTrue(res_ticket.output.get("ticket_id").startswith("SOC-"))
+        self.assertFalse(res_ticket.success)
+        self.assertEqual(res_ticket.output.get("status"), "NOT_CONFIGURED")
+        self.assertNotIn("ticket_id", res_ticket.output)
 
         # 2. Block sender
         prop_block = ToolProposal(

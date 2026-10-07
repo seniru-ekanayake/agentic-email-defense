@@ -8,47 +8,43 @@ on:
 
 jobs:
   test-python:
-    name: Python Security & Agent Test Suite
+    name: Backend tests
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
           cache: "pip"
+          cache-dependency-path: requirements-dev.txt
 
-      - name: Install Python Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pytest pytest-asyncio pydantic langgraph langchain-core langchain beautifulsoup4 requests python-magic-bin dnspython
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
 
-      - name: Run Test Suites
-        run: |
-          PYTHONPATH=. pytest tests/ -v
+      - name: Run test suite (offline)
+        run: pytest -m "not network"
 
-  typecheck-frontend:
-    name: Next.js Frontend Type Check
+  build-frontend:
+    name: Frontend build
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Node.js 20
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
-          cache-dependency-path: "apps/web/package.json"
+          cache-dependency-path: apps/web/package-lock.json
 
-      - name: Install Web Dependencies
-        working-directory: apps/web
-        run: |
-          npm ci || npm install
+      - name: Install dependencies
+        run: npm ci
 
-      - name: TypeScript & Lint Check
-        working-directory: apps/web
-        run: |
-          npx tsc --noEmit
+      - name: Build (includes type checking)
+        run: npm run build
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high

@@ -102,6 +102,7 @@ Thumbs.db
 !apps/web/public/logo.png
 !assets/logo.png
 !assets/dashboard.png
+!assets/dashboard-console.png
 audit_results_*.json
 authoritative_dom_*.json
 live_llm_dom_*.json
@@ -112,3 +113,11 @@ run_*_causality_audit.py
 verify_*_dom.py
 audit_suite.py
 test_adversarial_injection.eml
+
+# Next.js generated type references
+apps/web/next-env.d.ts
+
+# Local databases
+*.db
+*.db-wal
+*.db-shm

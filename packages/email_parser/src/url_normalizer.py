@@ -156,7 +156,13 @@ class URLNormalizer:
         elif scheme == "file":
             # Normalize file scheme: file:///c:/path or file://server/share
             stripped = rest.lstrip("/")
-            if rest.startswith("///") or (len(stripped) >= 2 and stripped[1] == ":"):
+            if stripped.startswith("\\"):
+                # file:///\\server\share\... (Outlook MonikerLink form) is a UNC path to a remote host
+                unc_parts = stripped.lstrip("\\").replace("/", "\\").split("\\")
+                host = unc_parts[0].lower()
+                path = "/" + "/".join(unc_parts[1:])
+                is_unc = bool(host) and host not in ("localhost", "127.0.0.1")
+            elif rest.startswith("///") or (len(stripped) >= 2 and stripped[1] == ":"):
                 is_local_file = True
                 host = "localhost"
                 path = "/" + stripped

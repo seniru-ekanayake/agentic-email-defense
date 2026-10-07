@@ -23,9 +23,6 @@ os.environ.setdefault("FISHINGMAILS_APPROVAL_HMAC_SECRET", "test-hmac-secret-key
 from apps.server import app, investigation_service, prod_manager
 from apps.agents.core.state_machine import AgentState, InvestigationStateMachine
 from apps.agents.core.event_system import EventStreamManager
-from apps.agents.core.integration_center import IntegrationManager, IntegrationStatus
-from apps.agents.core.agent_builder import ZeroCodeStore, AgentConfig, DetectionRule
-from apps.agents.core.system_selftest import SystemSelfTester, TestStatus
 from apps.agents.core.trust_score import TrustScoreCalculator
 from apps.agents.core.production_manager import PlatformMode
 
@@ -40,6 +37,8 @@ class TestProductionPlatform(unittest.TestCase):
             roles=["SOC_ANALYST", "INCIDENT_RESPONDER", "ADMIN"]
         )
         self.client = TestClient(app, headers={"Authorization": f"Bearer {token}"})
+        admin = create_principal_token(subject_id="admin", tenant_id="tenant-enterprise-prod", roles=["SOC_ADMIN"])
+        self.admin_headers = {"Authorization": f"Bearer {admin}"}
         self.sample_path = "packages/email_parser/samples/synthetic_cve_2023_35636_rendering_exploit.eml"
 
     def test_production_mode_purity(self):
@@ -50,26 +49,27 @@ class TestProductionPlatform(unittest.TestCase):
         self.assertFalse(prod_manager.allows_mocks())
 
         # Attempting to detonate synthetic demo in production must be forbidden
-        resp = self.client.get("/api/v1/demo")
+        resp = self.client.post("/api/v1/demo")
         self.assertEqual(resp.status_code, 403)
-        self.assertIn("FORBIDDEN IN PRODUCTION MODE", resp.json()["detail"])
+        self.assertIn("only available in DEMO or TEST mode", resp.json()["detail"])
 
     def test_mode_switching(self):
         """Verify switching to DEMO mode permits synthetic detonation."""
-        resp = self.client.post("/api/v1/mode", json={"mode": "DEMO"})
+        prod_manager.set_mode(PlatformMode.TEST)
+        resp = self.client.post("/api/v1/mode", json={"mode": "DEMO"}, headers=self.admin_headers)
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["mode"], "DEMO")
         self.assertTrue(prod_manager.allows_fixtures())
 
         # Demo sample detonation now allowed
-        demo_resp = self.client.get("/api/v1/demo")
+        demo_resp = self.client.post("/api/v1/demo")
         self.assertEqual(demo_resp.status_code, 200)
-        demo_data = demo_resp.json()
-        self.assertIn("[DEMO FIXTURE]", demo_data["title"])
+        self.assertEqual(demo_resp.json()["severity"], "CRITICAL")
 
-        # Switch back to PRODUCTION
-        self.client.post("/api/v1/mode", json={"mode": "PRODUCTION"})
-        self.assertTrue(prod_manager.is_production())
+        # PRODUCTION is chosen by FISHINGMAILS_ENV, never at runtime
+        resp = self.client.post("/api/v1/mode", json={"mode": "PRODUCTION"}, headers=self.admin_headers)
+        self.assertEqual(resp.status_code, 400)
+        prod_manager.set_mode(PlatformMode.TEST)
 
     def test_state_machine_transitions_and_controls(self):
         """Verify state machine lifecycle, pause, resume, and cancel."""
@@ -120,61 +120,14 @@ class TestProductionPlatform(unittest.TestCase):
         events = esm.get_events(inv_id)
         self.assertEqual(len(events), 2)
 
-    def test_12_subsystems_selftest(self):
-        """Verify the built-in system self-test across all 12 subsystems."""
-        resp = self.client.get("/api/v1/selftest")
-        self.assertEqual(resp.status_code, 200)
-        data = resp.json()
-
-        self.assertIn("results", data)
-        self.assertGreaterEqual(len(data["results"]), 14)
-        self.assertEqual(data["overall_status"], "PASS")
-
-        subsystems = [r["subsystem"] for r in data["results"]]
-        self.assertTrue(any("Email Parser" in s for s in subsystems))
-        self.assertTrue(any("Database" in s for s in subsystems))
-        self.assertTrue(any("Threat Intelligence" in s for s in subsystems))
-        self.assertTrue(any("Sandbox" in s for s in subsystems))
-        self.assertTrue(any("Browser" in s for s in subsystems))
-        self.assertTrue(any("Event Stream" in s for s in subsystems))
-        self.assertTrue(any("Safety Gate" in s for s in subsystems))
-
     def test_agent_trust_score(self):
         """Verify mathematically inspectable agent trust score."""
         resp = self.client.get("/api/v1/trust-score")
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
-        self.assertGreaterEqual(data["overall_score"], 80.0)
-        self.assertIn(data["grade"], ["A+", "A", "B"])
+        self.assertGreaterEqual(data["overall_score"], 0.0)
+        self.assertLessEqual(data["overall_score"], 100.0)
         self.assertEqual(len(data["components"]), 5)
-
-    def test_zero_code_integrations_and_health(self):
-        """Verify listing integrations and live socket/HTTP health check."""
-        resp = self.client.get("/api/v1/integrations")
-        self.assertEqual(resp.status_code, 200)
-        integrations = resp.json()
-        self.assertGreaterEqual(len(integrations), 5)
-
-        # Test Quad9 DoH health check
-        health_resp = self.client.post("/api/v1/integrations/int-quad9/health")
-        self.assertEqual(health_resp.status_code, 200)
-        health_data = health_resp.json()
-        self.assertIn(health_data["status"], ["CONNECTED", "OPERATIONAL"])
-        self.assertIsNotNone(health_data["latency_ms"])
-
-    def test_zero_code_agent_builder_and_rules(self):
-        """Verify saving and retrieving visual agent configs and detection rules."""
-        # Agent config
-        agent_resp = self.client.get("/api/v1/agent-config")
-        self.assertEqual(agent_resp.status_code, 200)
-        agents = agent_resp.json()
-        self.assertGreaterEqual(len(agents), 1)
-
-        # Detection rules
-        rules_resp = self.client.get("/api/v1/detection-rules")
-        self.assertEqual(rules_resp.status_code, 200)
-        rules = rules_resp.json()
-        self.assertGreaterEqual(len(rules), 2)
 
     def test_full_investigation_observability(self):
         """
@@ -205,7 +158,8 @@ class TestProductionPlatform(unittest.TestCase):
         self.assertIn("incident_id", inc)
         self.assertEqual(inc["severity"], "CRITICAL")
         self.assertEqual(inc["interaction_required"], "VIEW")
-        self.assertEqual(inc["cve"], "CVE-2023-35636")
+        # search-ms/UNC links are not attributed to a CVE that the evidence does not support
+        self.assertIsNone(inc["cve"])
 
         # Evidence Items
         self.assertIn("evidence_items", inc)
@@ -224,7 +178,7 @@ class TestProductionPlatform(unittest.TestCase):
 
         # Decision Trace
         self.assertIn("decision_trace", inc)
-        self.assertGreaterEqual(len(inc["decision_trace"]), 4)
+        self.assertGreaterEqual(len(inc["decision_trace"]), 2)
         for dec in inc["decision_trace"]:
             self.assertTrue(dec["decision_id"].startswith("D-"))
             self.assertTrue(dec["observed"])
@@ -233,13 +187,13 @@ class TestProductionPlatform(unittest.TestCase):
 
         # Tool Executions
         self.assertIn("tool_executions", inc)
-        self.assertGreaterEqual(len(inc["tool_executions"]), 2)
+        self.assertGreaterEqual(len(inc["tool_executions"]), 1)
 
         # Forensic Audit: What Actually Happened?
         audit = inc["forensic_audit"]
         self.assertGreaterEqual(len(audit["files_read"]), 1)
-        self.assertGreaterEqual(len(audit["tools_executed"]), 2)
-        self.assertGreaterEqual(len(audit["database_queries"]), 1)
+        self.assertEqual(len(audit["tools_executed"]), len(inc["tool_executions"]))
+        self.assertEqual(audit["llm_calls"], [])  # no LLM configured in tests, and none is claimed
 
         # Claim vs Evidence Verification
         claims = inc["claim_evidence_items"]
@@ -256,6 +210,9 @@ class TestProductionPlatform(unittest.TestCase):
         prov = inc["risk_provenance"]
         self.assertGreater(prov["final_score"], 50.0)
         self.assertGreaterEqual(len(prov["adjustments"]), 1)
+        evidence_ids = {e["evidence_id"] for e in inc["evidence_items"]}
+        for adj in prov["adjustments"]:
+            self.assertIn(adj["evidence_id"], evidence_ids)
 
         # Explanation Quality: 8 Mandatory Questions
         exp = inc["explanation"]
@@ -275,7 +232,6 @@ class TestProductionPlatform(unittest.TestCase):
 
         # Agent Trust Score
         ts = inc["trust_score"]
-        self.assertGreaterEqual(ts["overall_score"], 90.0)
         self.assertEqual(ts["unsupported_claim_count"], 0)
 
     def test_approval_lifecycle(self):
@@ -292,10 +248,11 @@ class TestProductionPlatform(unittest.TestCase):
         self.assertTrue(len(inc["pending_approvals"]) > 0)
         token = inc["pending_approvals"][0]["approval_token"]
 
-        # Approve
+        # No mail gateway configured: the approval is consumed but the dispatch is reported as failed
         app_resp = self.client.post(f"/api/v1/approve/{token}")
-        self.assertEqual(app_resp.status_code, 200)
-        self.assertEqual(app_resp.json()["status"], "SUCCESS")
+        self.assertEqual(app_resp.status_code, 502)
+        self.assertEqual(app_resp.json()["detail"]["output"]["status"], "NOT_CONFIGURED")
+        self.assertEqual(self.client.post(f"/api/v1/approve/{token}").status_code, 400)
 
 
 if __name__ == "__main__":

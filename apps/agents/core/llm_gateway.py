@@ -61,9 +61,18 @@ class LLMProvider(ABC):
 
 class OpenRouterProvider(LLMProvider):
     def __init__(self, api_key: Optional[str] = None, default_model: Optional[str] = None):
-        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY", "")
-        self.default_model = default_model or os.getenv("OPENROUTER_MODEL", "openrouter/free")
+        self._explicit_api_key = api_key
+        self._explicit_model = default_model
         self.base_url = "https://openrouter.ai/api/v1"
+
+    @property
+    def api_key(self) -> str:
+        """Read live so key rotation/removal takes effect without a restart."""
+        return (self._explicit_api_key or os.getenv("OPENROUTER_API_KEY", "")).strip()
+
+    @property
+    def default_model(self) -> str:
+        return self._explicit_model or os.getenv("OPENROUTER_MODEL", "openrouter/free")
 
     def validate_capabilities(self, model_id: str) -> ModelCapabilities:
         """
@@ -134,7 +143,7 @@ class OpenRouterProvider(LLMProvider):
         temperature: float = 0.1
     ) -> LLMResponse:
         target_model = model_id or self.default_model
-        api_key = self.api_key or os.getenv("OPENROUTER_API_KEY", "")
+        api_key = self.api_key
         
         # If no API key is provided, explicitly report NOT_CONFIGURED — never fabricate an LLM response!
         if not api_key or api_key == "mock":
@@ -334,14 +343,13 @@ class LLMGateway:
         
         # Validate default model on startup
         self._startup_validation()
-        LLMGateway._instance = self
+        if LLMGateway._instance is None:
+            LLMGateway._instance = self
 
     def is_configured(self) -> bool:
         """Returns True if an OpenRouter API key is set in environment or provider."""
-        api_key = self.openrouter.api_key or os.getenv("OPENROUTER_API_KEY", "")
-        if api_key and not self.openrouter.api_key:
-            self.openrouter.api_key = api_key
-        return bool(api_key and api_key.strip() and api_key != "mock")
+        api_key = self.openrouter.api_key
+        return bool(api_key and api_key != "mock")
 
     def generate_completion(
         self,

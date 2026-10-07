@@ -171,9 +171,11 @@ MZ\x90\x00...executable_payload...
         state.artifacts.append(Artifact(artifact_id="art-1", artifact_type="BODY_PLAIN", raw_data=evil_injection, location="body"))
         prompt_built = planner._build_planner_prompt(state, tools, [])
 
-        self.assertIn("<<<UNTRUSTED_ADVERSARIAL_EMAIL_CONTENT>>>", prompt_built)
-        # Verify the malicious attempt to insert literal fence inside the content was neutralized / properly escaped
-        self.assertIn("<<UNTRUSTED_ADVERSARIAL_EMAIL_CONTENT>>", prompt_built)
+        # The fence carries a per-prompt nonce and fence-like markers inside content are removed
+        self.assertRegex(prompt_built, r"\[BEGIN_QUARANTINED_EMAIL_CONTENT [0-9a-f]{16}\]")
+        self.assertNotIn("UNTRUSTED_ADVERSARIAL_EMAIL_CONTENT", prompt_built)
+        self.assertIn("SYSTEM OVERRIDE", prompt_built)
+        self.assertIn("[marker removed]", prompt_built)
 
     def test_llm_planner_proposal_schema_and_hallucination_validation(self):
         """Verify planner rejects hallucinated tools, malformed JSON, and forbidden extra fields."""
