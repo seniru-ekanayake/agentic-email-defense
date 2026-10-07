@@ -5,9 +5,13 @@ All /api/v1 routes require a verified HS256 JWT (see apps/agents/core/security_p
 The tenant is always taken from the token; client-supplied tenant hints are only consistency checks.
 """
 
+import asyncio
 import datetime
+import logging
 import os
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional
 
@@ -17,7 +21,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from apps.agents.investigation_service import InvestigationService
+from apps.agents.investigation_service import InvestigationService, new_incident_id
 from apps.agents.core.tool_registry import ToolRegistry
 from apps.agents.core.event_system import EventStreamManager
 from apps.agents.core.integration_center import IntegrationManager
@@ -64,6 +68,11 @@ app.add_middleware(
 )
 
 investigation_service = InvestigationService()
+_investigation_pool = ThreadPoolExecutor(
+    max_workers=int(os.getenv("FISHINGMAILS_MAX_CONCURRENT_INVESTIGATIONS", "4")), thread_name_prefix="investigation")
+_running: Dict[str, str] = {}  # incident_id -> tenant_id for investigations still in progress
+_running_lock = threading.Lock()
+logger = logging.getLogger("FishingMailsAPI")
 tool_registry = ToolRegistry.get_instance()
 event_manager = EventStreamManager.get_instance()
 integration_manager = IntegrationManager.get_instance()
@@ -225,8 +234,7 @@ async def set_incident_status(incident_id: str, request: Request):
     return {"incident_id": incident_id, "status": rec.status}
 
 
-@app.post("/api/v1/investigate")
-async def investigate_email(request: Request, file: UploadFile = File(...), tenant_id: Optional[str] = Form(None)):
+async def _read_upload(request: Request, file: UploadFile, tenant_id: Optional[str]):
     principal = get_authenticated_principal(request)
     if tenant_id and tenant_id != principal.tenant_id:
         raise HTTPException(status_code=403, detail="Tenant mismatch with authenticated identity.")
@@ -235,6 +243,43 @@ async def investigate_email(request: Request, file: UploadFile = File(...), tena
         raise HTTPException(status_code=400, detail="Empty email payload uploaded.")
     if len(raw_eml) > MAX_EML_BYTES:
         raise HTTPException(status_code=413, detail=f"Email exceeds {MAX_EML_BYTES} bytes.")
+    return principal, raw_eml
+
+
+@app.post("/api/v1/investigations", status_code=202)
+async def start_investigation(request: Request, file: UploadFile = File(...), tenant_id: Optional[str] = Form(None)):
+    """Starts an investigation in the background and returns at once; follow it live via the events stream."""
+    principal, raw_eml = await _read_upload(request, file, tenant_id)
+    incident_id = new_incident_id()
+    filename = (file.filename or "uploaded_email.eml")[:255]
+    with _running_lock:
+        _running[incident_id] = principal.tenant_id
+
+    def job():
+        try:
+            incident = investigation_service.run_investigation(
+                tenant_id=principal.tenant_id, raw_eml=raw_eml, autonomy_level=1,
+                source_filename=filename, incident_id=incident_id)
+            record_audit_event(principal, "INVESTIGATION_COMPLETED", {
+                "incident_id": incident_id, "risk_score": incident.overall_risk_score, "severity": incident.severity})
+        except Exception as exc:
+            logger.error(f"Background investigation {incident_id} failed: {exc}")
+            event_manager.publish_event(investigation_id=incident_id, agent_run_id="background", event_type="agent.failed",
+                                        message=f"Investigation failed: {exc}", status="FAILED")
+        finally:
+            with _running_lock:
+                _running.pop(incident_id, None)
+
+    asyncio.get_running_loop().run_in_executor(_investigation_pool, job)
+    return JSONResponse(status_code=202, content={
+        "incident_id": incident_id, "status": "RUNNING",
+        "events": f"/api/v1/investigations/{incident_id}/events"})
+
+
+@app.post("/api/v1/investigate")
+async def investigate_email(request: Request, file: UploadFile = File(...), tenant_id: Optional[str] = Form(None)):
+    """Synchronous variant: returns the finished incident."""
+    principal, raw_eml = await _read_upload(request, file, tenant_id)
     try:
         incident = investigation_service.run_investigation(
             tenant_id=principal.tenant_id, raw_eml=raw_eml, autonomy_level=1,
@@ -268,7 +313,12 @@ async def compare_investigations(id_a: str, id_b: str, request: Request):
 async def stream_investigation_events(incident_id: str, request: Request):
     principal = get_authenticated_principal(request)
     tenant_id = resolve_authorized_tenant(request, principal)
-    _incident_or_404(incident_id, tenant_id)
+    with _running_lock:
+        running_tenant = _running.get(incident_id)
+    if running_tenant is None:
+        _incident_or_404(incident_id, tenant_id)
+    elif running_tenant != tenant_id:
+        raise HTTPException(status_code=404, detail="Incident not found")
 
     async def sse():
         async for event in event_manager.subscribe(incident_id):

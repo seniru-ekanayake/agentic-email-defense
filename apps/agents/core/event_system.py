@@ -8,6 +8,7 @@ import uuid
 import datetime
 import json
 import asyncio
+import threading
 from typing import List, Dict, Any, Optional, AsyncGenerator
 from pydantic import BaseModel, Field
 
@@ -42,8 +43,10 @@ class EventStreamManager:
 
     def __init__(self):
         self._investigation_events: Dict[str, List[AgentLifecycleEvent]] = {}
-        self._subscribers: Dict[str, List[asyncio.Queue]] = {}
+        # Each subscriber is (event loop, queue): investigations may publish from worker threads.
+        self._subscribers: Dict[str, List[Any]] = {}
         self._seq_counters: Dict[str, int] = {}
+        self._lock = threading.Lock()
 
     @classmethod
     def get_instance(cls) -> "EventStreamManager":
@@ -67,8 +70,9 @@ class EventStreamManager:
         data: Optional[Dict[str, Any]] = None
     ) -> AgentLifecycleEvent:
         """Publishes a new event into the investigation ledger and dispatches to subscribers."""
-        seq = self._seq_counters.get(investigation_id, 0) + 1
-        self._seq_counters[investigation_id] = seq
+        with self._lock:
+            seq = self._seq_counters.get(investigation_id, 0) + 1
+            self._seq_counters[investigation_id] = seq
 
         event = AgentLifecycleEvent(
             investigation_id=investigation_id,
@@ -86,15 +90,15 @@ class EventStreamManager:
             data=data or {}
         )
 
-        self._investigation_events.setdefault(investigation_id, []).append(event)
+        with self._lock:
+            self._investigation_events.setdefault(investigation_id, []).append(event)
+            subscribers = list(self._subscribers.get(investigation_id, []))
 
-        # Notify active streaming subscribers
-        if investigation_id in self._subscribers:
-            for queue in self._subscribers[investigation_id]:
-                try:
-                    queue.put_nowait(event)
-                except Exception:
-                    pass
+        for loop, queue in subscribers:
+            try:
+                loop.call_soon_threadsafe(queue.put_nowait, event)
+            except RuntimeError:
+                pass  # subscriber's loop already closed
 
         return event
 
@@ -102,8 +106,9 @@ class EventStreamManager:
 
     def get_events(self, investigation_id: str) -> List[AgentLifecycleEvent]:
         """Returns recorded events, falling back to durable storage once the in-memory buffer is released."""
-        if investigation_id in self._investigation_events:
-            return self._investigation_events[investigation_id]
+        with self._lock:
+            if investigation_id in self._investigation_events:
+                return list(self._investigation_events[investigation_id])
         try:
             from apps.agents.core.durable_storage import DurableStorage
             return [AgentLifecycleEvent(**e) for e in DurableStorage.get_instance().get_events(investigation_id)]
@@ -112,8 +117,10 @@ class EventStreamManager:
 
     def forget(self, investigation_id: str) -> None:
         """Releases the in-memory buffer for a persisted investigation (bounded memory)."""
-        if not self._subscribers.get(investigation_id):
-            self._investigation_events.pop(investigation_id, None)
+        with self._lock:
+            if not self._subscribers.get(investigation_id):
+                self._investigation_events.pop(investigation_id, None)
+                self._seq_counters.pop(investigation_id, None)
 
     async def subscribe(self, investigation_id: str, heartbeat_seconds: float = 15.0,
                         max_seconds: float = 600.0) -> AsyncGenerator[Optional[AgentLifecycleEvent], None]:
@@ -122,10 +129,15 @@ class EventStreamManager:
         Yields None as a heartbeat while waiting. Ends immediately if the investigation already finished.
         """
         queue: asyncio.Queue = asyncio.Queue()
-        self._subscribers.setdefault(investigation_id, []).append(queue)
+        entry = (asyncio.get_running_loop(), queue)
+        with self._lock:
+            self._subscribers.setdefault(investigation_id, []).append(entry)
+        seen = set()
         try:
+            # Registered before the snapshot, so nothing published in between is lost; duplicates are skipped.
             existing = list(self.get_events(investigation_id))
             for ev in existing:
+                seen.add(ev.event_id)
                 yield ev
             if any(ev.event_type in self.TERMINAL_EVENTS for ev in existing):
                 return
@@ -137,10 +149,14 @@ class EventStreamManager:
                 except asyncio.TimeoutError:
                     yield None
                     continue
+                if event.event_id in seen:
+                    continue
+                seen.add(event.event_id)
                 yield event
                 if event.event_type in self.TERMINAL_EVENTS:
                     return
         finally:
-            subs = self._subscribers.get(investigation_id, [])
-            if queue in subs:
-                subs.remove(queue)
+            with self._lock:
+                subs = self._subscribers.get(investigation_id, [])
+                if entry in subs:
+                    subs.remove(entry)

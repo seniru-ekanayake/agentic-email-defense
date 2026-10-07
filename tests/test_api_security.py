@@ -212,3 +212,15 @@ def test_integrations_report_unconfigured_connectors_truthfully():
     assert data["mail-gateway"]["status"] == "NOT_CONFIGURED"
     assert data["urlhaus"]["status"] == "NOT_CONFIGURED"
     assert data["cisa-kev"]["status"] == "OPERATIONAL"
+
+
+def test_quad9_block_requires_existence_on_the_unfiltered_resolver(monkeypatch):
+    from packages.threat_intel.src import free_feeds
+    answers = {("9.9.9.9", "blocked.example"): (3, 0), ("9.9.9.10", "blocked.example"): (0, 1),
+               ("9.9.9.9", "missing.example"): (3, 0), ("9.9.9.10", "missing.example"): (3, 0),
+               ("9.9.9.9", "fine.example"): (0, 1)}
+    monkeypatch.setattr(free_feeds, "dns_udp_query", lambda server, domain, timeout=2.0: answers[(server, domain)])
+    c = free_feeds.DoHReputationConnector()
+    assert c.check_domain_reputation("blocked.example")["is_blocked_by_threat_filter"] is True
+    assert c.check_domain_reputation("missing.example")["is_blocked_by_threat_filter"] is False
+    assert c.check_domain_reputation("fine.example")["is_blocked_by_threat_filter"] is False

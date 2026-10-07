@@ -103,6 +103,8 @@ Thumbs.db
 !assets/logo.png
 !assets/dashboard.png
 !assets/dashboard-console.png
+!assets/agents-thinking.png
+!assets/reasoning-trace.png
 audit_results_*.json
 authoritative_dom_*.json
 live_llm_dom_*.json
@@ -121,3 +123,6 @@ apps/web/next-env.d.ts
 *.db
 *.db-wal
 *.db-shm
+
+# Benchmark output
+benchmark-results/

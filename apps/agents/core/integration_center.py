@@ -126,11 +126,10 @@ class IntegrationManager:
             return rec
 
         def run(r: IntegrationRecord):
-            resp = requests.get("https://dns.quad9.net:5053/dns-query", params={"name": "example.com", "type": "A"},
-                                headers={"accept": "application/dns-json"}, timeout=5)
-            ok = resp.status_code == 200 and resp.json().get("Status") == 0
-            r.status = IntegrationStatus.OPERATIONAL if ok else IntegrationStatus.UNAVAILABLE
-            r.health_message = f"DoH HTTP {resp.status_code}"
+            from packages.threat_intel.src.free_feeds import dns_udp_query
+            rcode, _ = dns_udp_query("9.9.9.9", "example.com", timeout=3.0)
+            r.status = IntegrationStatus.OPERATIONAL if rcode == 0 else IntegrationStatus.DEGRADED
+            r.health_message = f"Quad9 9.9.9.9 answered (rcode {rcode})"
         return self._timed(rec, run)
 
     def _kev(self) -> IntegrationRecord:

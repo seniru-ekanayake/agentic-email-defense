@@ -69,3 +69,35 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #bcc3cd;
 }
+
+/* ---- Pixel agents ---------------------------------------------------- */
+.pixel-stage svg { image-rendering: pixelated; }
+.pixel-breathe { animation: pixel-breathe 2.4s ease-in-out infinite; }
+.pixel-ponder { animation: pixel-ponder 1.2s steps(2) infinite; }
+.pixel-walk { animation: pixel-walk 2.2s ease-in-out infinite alternate; }
+.pixel-frames { position: relative; width: 40px; height: 40px; }
+.pixel-frames .frame-a, .pixel-frames .frame-b { position: absolute; inset: 0; }
+.pixel-frames .frame-a { animation: pixel-frame 0.4s steps(1) infinite; }
+.pixel-frames .frame-b { animation: pixel-frame 0.4s steps(1) infinite reverse; }
+.pixel-breathe .frame-b { display: none; }
+.pixel-carry { animation: pixel-carry 1.6s ease-in-out infinite alternate; }
+.pixel-doc { animation: pixel-bob 0.5s steps(2) infinite; }
+.pixel-jump { animation: pixel-jump 0.6s ease-out 3; }
+.pixel-spark { animation: pixel-spark 0.5s steps(2) infinite; }
+.pixel-pop { animation: pixel-pop 0.6s ease-out; }
+.pixel-dots { display: inline-block; animation: pixel-dots 1s steps(3) infinite; }
+
+@keyframes pixel-breathe { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-1px); } }
+@keyframes pixel-ponder { 0% { transform: translateY(0) rotate(-3deg); } 100% { transform: translateY(-2px) rotate(3deg); } }
+@keyframes pixel-walk { from { transform: translateX(0); } to { transform: translateX(140%); } }
+@keyframes pixel-frame { 0% { opacity: 1; } 50% { opacity: 0; } }
+@keyframes pixel-carry { from { transform: translateX(0); } to { transform: translateX(-60%); } }
+@keyframes pixel-bob { 0% { transform: translateY(0); } 100% { transform: translateY(-2px); } }
+@keyframes pixel-jump { 0%, 100% { transform: translateY(0); } 40% { transform: translateY(-10px); } }
+@keyframes pixel-spark { 0% { transform: rotate(-12deg); } 100% { transform: rotate(12deg); } }
+@keyframes pixel-pop { from { transform: translate(-50%, 6px) scale(0.6); opacity: 0; } to { transform: translate(-50%, 0) scale(1); opacity: 1; } }
+@keyframes pixel-dots { 0% { opacity: 0.3; } 50% { opacity: 1; } 100% { opacity: 0.3; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .pixel-stage *, .pixel-stage { animation: none !important; transition: none !important; }
+}

@@ -97,6 +97,12 @@ export interface DecisionRecord {
   result_observed?: string;
   belief_state_impact?: string;
   next_planned_action?: string;
+  planner_type?: string;
+  model?: string | null;
+  reasoning_steps?: string[];
+  reasoning_trace?: string | null;
+  llm_proposal?: Record<string, any> | null;
+  override_reason?: string | null;
 }
 
 export interface ToolExecutionRecord {

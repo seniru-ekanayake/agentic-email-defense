@@ -11,12 +11,13 @@ import {
 import {
   listIncidents,
   getIncident,
-  investigateEmail,
+  startInvestigation,
   getSystemHealth,
   getTrustScore,
   getPlatformMode,
 } from '@/lib/api/incidents';
 import { subscribeInvestigationEvents } from '@/lib/api/events';
+import { PixelAgents, moodFromEvent } from '@/components/PixelAgents';
 import { getAuthToken, setAuthToken, getTokenTenant } from '@/lib/api/client';
 import { AgentLiveStreamVisualizer } from '@/components/AgentLiveStreamVisualizer';
 import { AttackGraphVisualizer } from '@/components/AttackGraphVisualizer';
@@ -127,6 +128,9 @@ export default function DashboardPage() {
       },
       onEvent: (event) => {
         setEvents((prev) => [...prev, event]);
+        if (event.event_type === 'agent.failed') {
+          setBackendError(event.message);
+        }
         if (event.event_type === 'agent.proposal.created' && event.data?.approval_token) {
           setActiveProposal({
             approval_token: event.data.approval_token,
@@ -143,9 +147,15 @@ export default function DashboardPage() {
       onError: (err) => {
         console.warn('SSE stream notice:', err);
       },
-      onClose: () => {
+      onClose: async () => {
         setIsStreaming(false);
         refreshLedger();
+        try {
+          const finished = await getIncident(incidentId, { tenantId });
+          setSelectedIncident(finished);
+        } catch {
+          // A failed investigation has no incident record; the stream already showed agent.failed.
+        }
       },
     });
 
@@ -163,25 +173,9 @@ export default function DashboardPage() {
       setEvents([]);
       setActiveNav('stream');
 
-      // 1. Submit EML payload to real backend POST /api/v1/investigate
-      const createdIncident = await investigateEmail(file, file.name, tenantId);
-
-      // 2. Add to local state immediately
-      setIncidentList((prev) => [createdIncident, ...prev.filter((i) => i.incident_id !== createdIncident.incident_id)]);
-      setSelectedIncident(createdIncident);
-
-      // 3. Connect real SSE stream
-      subscribeToIncidentStream(createdIncident.incident_id);
-
-      // 4. Check if pending approval exists
-      if (createdIncident.pending_approvals && createdIncident.pending_approvals.length > 0) {
-        const topApproval = createdIncident.pending_approvals[0];
-        setActiveProposal({
-          ...topApproval,
-          target_identity: createdIncident.target_identity || createdIncident.recipient,
-          incident_id: createdIncident.incident_id,
-        });
-      }
+      // Start the investigation in the background and follow it live; proposals arrive as stream events.
+      const started = await startInvestigation(file, file.name);
+      subscribeToIncidentStream(started.incident_id);
     } catch (err: any) {
       console.error('File upload investigation failed:', err);
       setBackendError(`Investigation failed: ${err.message}`);
@@ -580,6 +574,16 @@ export default function DashboardPage() {
           </div>
         ) : (
           <>
+            {isStreaming && (
+              <button
+                type="button"
+                onClick={() => setActiveNav('stream')}
+                className="block w-full text-left mb-3.5"
+                title="Open the live investigation"
+              >
+                <PixelAgents mood={moodFromEvent(events[events.length - 1]?.event_type, isStreaming)} compact />
+              </button>
+            )}
             {/* Top Metrics Row */}
             <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3.5">
               <div className="bg-white border border-[#e7e9ee] rounded-xl p-[18px_19px] shadow-sm">

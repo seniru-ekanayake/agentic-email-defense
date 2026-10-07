@@ -77,7 +77,7 @@ class LLMDecisionProposal(BaseModel):
     evidence_ids: List[str] = Field(default_factory=list, description="IDs of observed evidence motivating this decision")
     expected_information_gain: float = Field(default=0.5, ge=0.0, le=1.0, description="Estimated information gain (0.0 to 1.0)")
     confidence: float = Field(default=0.5, ge=0.0, le=1.0, description="Confidence in this decision (0.0 to 1.0)")
-    rationale_summary: str = Field(description="Concise operational rationale")
+    rationale_summary: str = Field(default="", description="Concise operational rationale (required for RUN_TOOL)")
     alternatives: List[Dict[str, str]] = Field(default_factory=list, description="Alternative tools considered and rejection reason")
 
     model_config = {"extra": "forbid"}
@@ -107,6 +107,10 @@ class PlannerDecision(BaseModel):
     evidence_ids_used: List[str] = Field(default_factory=list)
     policy_constraints: List[str] = Field(default_factory=list)
     arbitration: Optional[Dict[str, Any]] = None  # Documents Rule vs LLM proposals and consensus reasoning in Hybrid mode
+    reasoning_steps: List[str] = Field(default_factory=list)  # human-readable chain explaining this decision
+    reasoning_trace: Optional[str] = None  # the model's own thought text, when the provider returns it
+    llm_proposal: Optional[Dict[str, Any]] = None  # what the LLM proposed (also when it was overridden)
+    override_reason: Optional[str] = None  # why the pipeline did not follow the LLM proposal
     model: Optional[str] = None
     provider: Optional[str] = None
     latency_ms: float = 0.0
@@ -155,7 +159,9 @@ class InvestigationState(BaseModel):
     llm_call_count: int = 0
     llm_tokens_total: int = 0
     replanning_cycle_count: int = 0
-    llm_calls: List[Dict[str, Any]] = Field(default_factory=list)  # every real LLM request: model, status, latency, tokens, error
+    llm_calls: List[Dict[str, Any]] = Field(default_factory=list)
+    activated_skills: List[str] = Field(default_factory=list)  # forensic playbooks matched to this email
+    playbook_context: str = ""  # trusted playbook guidance given to the LLM planner  # every real LLM request: model, status, latency, tokens, error
     
     # Engine Observability
     planner_engine: str = "RULE_ENGINE"

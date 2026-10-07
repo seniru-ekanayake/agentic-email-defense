@@ -9,6 +9,7 @@ Integrates free threat intelligence sources with full enterprise proxy support:
 from __future__ import annotations
 
 import os
+import socket
 import asyncio
 import time
 import logging
@@ -182,88 +183,74 @@ class URLhausConnector:
         return result
 
 
+def _dns_packet(domain: str, qtype: int = 1) -> bytes:
+    import struct
+    header = struct.pack(">HHHHHH", 0x4D46, 0x0100, 1, 0, 0, 0)  # recursion desired, one question
+    qname = b"".join(bytes([len(p)]) + p.encode("idna") for p in domain.split(".") if p) + b"\x00"
+    return header + qname + struct.pack(">HH", qtype, 1)
+
+
+def dns_wire_query(domain: str, qtype: int = 1) -> str:
+    """RFC 8484 GET parameter (base64url DNS query without padding)."""
+    import base64
+    return base64.urlsafe_b64encode(_dns_packet(domain, qtype)).rstrip(b"=").decode()
+
+
+def dns_udp_query(server: str, domain: str, timeout: float = 2.0) -> Tuple[int, int]:
+    """Sends one A query over UDP and returns (rcode, answer_count). Raises OSError on timeout."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.settimeout(timeout)
+    try:
+        sock.sendto(_dns_packet(domain), (server, 53))
+        data, _ = sock.recvfrom(4096)
+    finally:
+        sock.close()
+    if len(data) < 12 or data[:2] != b"\x4d\x46":
+        raise OSError("malformed DNS response")
+    return data[3] & 0x0F, int.from_bytes(data[6:8], "big")
+
+
 class DoHReputationConnector:
     """DNS-over-HTTPS (DoH) threat resolution using Quad9 or Cloudflare Security DoH."""
 
-    QUAD9_DOH = "https://dns.quad9.net:5053/dns-query"  # Quad9 serves DNS-JSON on port 5053
-    CLOUDFLARE_DOH = "https://security.cloudflare-dns.com/dns-query"
-    CLOUDFLARE_UNFILTERED_DOH = "https://cloudflare-dns.com/dns-query"
 
     def __init__(self, cache: Optional[ThreatIntelCache] = None, timeout: float = 3.0):
         self.cache = cache or ThreatIntelCache()
         self.timeout = timeout
 
-    def _resolves_unfiltered(self, domain: str, session) -> bool:
-        try:
-            r = session.get(self.CLOUDFLARE_UNFILTERED_DOH, params={"name": domain, "type": "A"},
-                            headers={"accept": "application/dns-json"}, timeout=self.timeout)
-            return r.status_code == 200 and r.json().get("Status") == 0
-        except Exception:
-            return False
+    QUAD9_FILTERED = "9.9.9.9"     # threat-blocking resolver: answers NXDOMAIN for known-malicious domains
+    QUAD9_UNFILTERED = "9.9.9.10"  # same provider without blocking, used to tell "blocked" from "does not exist"
 
     def check_domain_reputation(self, domain: str) -> Dict[str, Any]:
-        """Query Quad9 threat-blocking DoH."""
+        """Quad9 threat-blocking check: blocked = NXDOMAIN on 9.9.9.9 but resolvable on 9.9.9.10."""
         cache_key = f"doh:{domain}"
         cached = self.cache.get(cache_key)
         if cached:
             return cached
-
         clean_domain = domain.strip().lower().rstrip(".")
-        headers = {"accept": "application/dns-json"}
-        session, net_mode = get_enterprise_session()
-
         try:
-            res = session.get(
-                self.QUAD9_DOH,
-                params={"name": clean_domain, "type": "A"},
-                headers=headers,
-                timeout=self.timeout,
-            )
-            if res.status_code == 200:
-                data = res.json()
-                status = data.get("Status", 0)
-                answers = data.get("Answer", [])
-                # Quad9 signals a threat block with NXDOMAIN. A domain that simply does not exist also
-                # returns NXDOMAIN, so a block is only confirmed when an unfiltered resolver resolves it.
-                is_blocked = False
-                if status == 3:
-                    is_blocked = self._resolves_unfiltered(clean_domain, session)
-                result = {
-                    "domain": clean_domain,
-                    "doh_provider": "quad9",
-                    "network_state": net_mode,
-                    "dns_status_code": status,
-                    "is_blocked_by_threat_filter": is_blocked,
-                    "answers": answers,
-                }
-            else:
-                result = {
-                    "domain": clean_domain,
-                    "doh_provider": "quad9",
-                    "network_state": "NETWORK_ERROR",
-                    "dns_status_code": res.status_code,
-                    "is_blocked_by_threat_filter": False,
-                    "answers": [],
-                }
-        except requests.exceptions.SSLError as exc:
+            status, answers = dns_udp_query(self.QUAD9_FILTERED, clean_domain, timeout=self.timeout)
+            is_blocked = False
+            if status == 3:
+                unfiltered_status, _ = dns_udp_query(self.QUAD9_UNFILTERED, clean_domain, timeout=self.timeout)
+                is_blocked = unfiltered_status == 0
             result = {
                 "domain": clean_domain,
                 "doh_provider": "quad9",
-                "network_state": "TLS_ERROR",
-                "dns_status_code": -1,
-                "is_blocked_by_threat_filter": False,
-                "error": str(exc)
+                "network_state": "DIRECT",
+                "dns_status_code": status,
+                "answer_count": answers,
+                "is_blocked_by_threat_filter": is_blocked,
             }
-        except Exception as exc:
+        except (OSError, UnicodeError) as exc:
             result = {
                 "domain": clean_domain,
                 "doh_provider": "quad9",
                 "network_state": "NETWORK_ERROR",
                 "dns_status_code": -1,
                 "is_blocked_by_threat_filter": False,
-                "error": str(exc)
+                "error": str(exc),
             }
-
         self.cache.set(cache_key, result)
         return result
 

@@ -26,6 +26,20 @@ export async function getIncident(
   });
 }
 
+/** Starts a background investigation; follow it with subscribeInvestigationEvents(incident_id). */
+export async function startInvestigation(
+  file: File | Blob,
+  filename?: string
+): Promise<{ incident_id: string; status: string; events: string }> {
+  const formData = new FormData();
+  formData.append('file', file, filename || (file instanceof File ? file.name : 'message.eml'));
+  return apiClient<{ incident_id: string; status: string; events: string }>('/api/v1/investigations', {
+    method: 'POST',
+    body: formData,
+    headers: {},
+  });
+}
+
 export async function investigateEmail(
   file: File | Blob,
   filename?: string,
