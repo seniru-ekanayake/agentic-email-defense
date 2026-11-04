@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 64" width="1280" height="64" role="img" aria-label="QUICK START">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#22d3ee" stop-opacity="0"/>
+      <stop offset="0.25" stop-color="#22d3ee"/>
+      <stop offset="0.75" stop-color="#a78bfa"/>
+      <stop offset="1" stop-color="#a78bfa" stop-opacity="0"/>
+    </linearGradient>
+    <style>
+      .t { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; }
+      .d { animation: slide 3.5s ease-in-out infinite alternate; }
+      @keyframes slide { from { transform: translateX(-420px); } to { transform: translateX(420px); } }
+    </style>
+  </defs>
+  <rect x="40" y="31" width="1200" height="2" fill="url(#g)" opacity="0.55"/>
+  <g class="d"><rect x="600" y="29" width="80" height="6" rx="3" fill="#7dd3fc" opacity="0.9"/></g>
+  <rect x="534" y="14" width="212" height="36" rx="18" fill="#0b1020" stroke="#22d3ee" stroke-opacity="0.6"/>
+  <text x="640" y="38" class="t" font-size="14" letter-spacing="4" fill="#e2e8f0" text-anchor="middle">QUICK START</text>
+</svg>

@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 150" width="1280" height="150" role="img" aria-label="Verdict severity ladder: low, medium, high, critical">
+  <defs>
+    <style>
+      .t { font-family: 'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif; }
+      .m { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; }
+      .card { animation: pop 0.8s ease-out both; }
+      @keyframes pop { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+  </defs>
+  <rect width="1280" height="150" rx="20" fill="#080c18"/>
+  <text x="40" y="24" class="m" font-size="12" letter-spacing="4" fill="#475569">VERDICT SEVERITY LADDER</text>
+  
+  <g class="card" style="animation-delay:0.0s">
+    <rect x="40" y="36" width="270" height="92" rx="14" fill="#0f172a" stroke="#34d399" stroke-opacity="0.8" stroke-width="1.5"/>
+    <rect x="40" y="36" width="8" height="92" rx="4" fill="#34d399"/>
+    <text x="70" y="78" class="t" font-size="28" font-weight="800" fill="#34d399">LOW</text>
+    <text x="70" y="108" class="m" font-size="14" fill="#94a3b8">risk score 0</text>
+  </g>
+  <g class="card" style="animation-delay:0.2s">
+    <rect x="340" y="36" width="270" height="92" rx="14" fill="#0f172a" stroke="#fbbf24" stroke-opacity="0.8" stroke-width="1.5"/>
+    <rect x="340" y="36" width="8" height="92" rx="4" fill="#fbbf24"/>
+    <text x="370" y="78" class="t" font-size="28" font-weight="800" fill="#fbbf24">MEDIUM</text>
+    <text x="370" y="108" class="m" font-size="14" fill="#94a3b8">risk score 20 to 25</text>
+  </g>
+  <g class="card" style="animation-delay:0.4s">
+    <rect x="640" y="36" width="270" height="92" rx="14" fill="#0f172a" stroke="#fb923c" stroke-opacity="0.8" stroke-width="1.5"/>
+    <rect x="640" y="36" width="8" height="92" rx="4" fill="#fb923c"/>
+    <text x="670" y="78" class="t" font-size="28" font-weight="800" fill="#fb923c">HIGH</text>
+    <text x="670" y="108" class="m" font-size="14" fill="#94a3b8">risk score 50 to 55</text>
+  </g>
+  <g class="card" style="animation-delay:0.6000000000000001s">
+    <rect x="940" y="36" width="270" height="92" rx="14" fill="#0f172a" stroke="#f43f5e" stroke-opacity="0.8" stroke-width="1.5"/>
+    <rect x="940" y="36" width="8" height="92" rx="4" fill="#f43f5e"/>
+    <text x="970" y="78" class="t" font-size="28" font-weight="800" fill="#f43f5e">CRITICAL</text>
+    <text x="970" y="108" class="m" font-size="14" fill="#94a3b8">risk score 70</text>
+  </g>
+</svg>
